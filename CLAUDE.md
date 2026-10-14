@@ -19,18 +19,23 @@ coach_rules.md        規則檔（使用者維護）
 coach/
   rules.py            讀規則檔、算版本
   cases.py            讀測試案例
-  prompt.py           組 messages、解析模型回覆
+  prompt.py           組 messages、解析模型回覆（含信心調整、週回報兩段的輸出約定）
   llm.py              LLM 抽象層（azure / openai），換供應商只改這裡
-  cli.py              命令列入口
+  cli.py              測試案例執行器（含 kind: weekly 的週回報案例）
+  flow.py             對話狀態機（clarify → plan → ready → 週回報 → plan…），API 與 chat 共用
+  store.py            session 存取（JSON 檔）；換資料庫只換這一層
+  api.py              最小 FastAPI
+  chat.py             互動式命令列，不開網頁跑完整流程
 test_cases/           測試輸入（*.md，front matter 有 expected_status）
-outputs/              每次執行的輸出（依案例分資料夾）+ runs.csv 總表
+outputs/              每次執行的輸出（依案例分資料夾）+ runs.csv 總表；sessions/<id>.json 是對話紀錄
 tests/                pytest（用 tests/fakes.py 的替身，不需金鑰；不驗證規則效果）
 ```
 
 ## 階段
 - [x] 階段 0：規劃 + CLAUDE.md
 - [x] 階段 1：CLI 腳本（讀規則 → 讀案例 → 呼叫 LLM → 輸出檔案）
-- [ ] 階段 2：FastAPI + PostgreSQL（SQLAlchemy + Alembic）
+- [x] 階段 2-lite：信心分數來回調整 + 週回報 + 最小 FastAPI（session 存 JSON 檔，不接資料庫）
+- [ ] 階段 2：PostgreSQL（SQLAlchemy + Alembic），換掉 store.py
 - [ ] 階段 3：Flutter Web
 - [ ] 階段 4：部署（Render / Neon / 靜態託管）、CORS
 
@@ -46,6 +51,9 @@ copy .env.example .env      # 填入 Azure OpenAI 端點/金鑰/部署名
 python -m coach.cli --all                          # 跑全部案例
 python -m coach.cli test_cases/01_noodle_shop.md   # 跑單一案例
 python -m coach.cli --all --dry-run                # 不呼叫 LLM，寫到 outputs/_dry_run/*.md
+
+uvicorn coach.api:app --reload                     # API，開 http://127.0.0.1:8000/docs
+python -m coach.chat                               # 互動式命令列（--case / --resume / --weekly / --list）
 ```
 輸出：`outputs/<案例>/<時間>__rules-<版本>-<sha8>.md`，並追加一列到 `outputs/runs.csv`。
 所有案例的 actual_status 與 expected_status 一致 → exit 0，否則 exit 1。

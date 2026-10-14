@@ -73,7 +73,17 @@ def test_parse_reply(raw, status):
     assert parse_reply(raw).status == status
 
 
-CASES = load_cases(ROOT / "test_cases")
+# 階段 1 的測試只管一般案例；週回報案例（kind: weekly）由 test_stage2 測
+CASES = [c for c in load_cases(ROOT / "test_cases") if c.kind != "weekly"]
+
+
+@pytest.fixture(autouse=True)
+def only_stage1_cases(tmp_path_factory, monkeypatch):
+    """--all 只跑一般案例：複製到暫存資料夾再指給 cli。"""
+    d = tmp_path_factory.mktemp("cases")
+    for c in CASES:
+        (d / c.path.name).write_bytes(c.path.read_bytes())
+    monkeypatch.setattr(cli, "CASES_DIR", d)
 
 
 def _use(monkeypatch, llm):

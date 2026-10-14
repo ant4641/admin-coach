@@ -28,3 +28,29 @@ class ScriptedLLM:
 
 def reply(status: str) -> dict:
     return {"status": status, "missing": [] if status == "plan" else ["x"], "message": f"scripted {status}"}
+
+
+class SequenceLLM:
+    """依序回覆；回覆用完還被呼叫就丟錯（代表流程多打了一次模型，或少寫了測試劇本）。"""
+
+    provider = "scripted"
+    model = "scripted"
+    temperature = None
+
+    def __init__(self, *replies: dict | str) -> None:
+        self.queue = [r if isinstance(r, str) else json.dumps(r, ensure_ascii=False) for r in replies]
+        self.calls: list[list[dict[str, str]]] = []
+
+    def complete(self, messages: list[dict[str, str]]) -> LLMResult:
+        self.calls.append(messages)
+        if not self.queue:
+            raise AssertionError("劇本用完了，但流程又呼叫了一次模型")
+        return LLMResult(text=self.queue.pop(0), model=self.model, latency_ms=0)
+
+
+def clarify(message: str, **extra) -> dict:
+    return {"status": "clarify", "missing": ["x"], "message": message, **extra}
+
+
+def plan(table: str, **extra) -> dict:
+    return {"status": "plan", "missing": [], "message": table, **extra}
