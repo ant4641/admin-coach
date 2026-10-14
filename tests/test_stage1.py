@@ -1,22 +1,26 @@
-import csv
+"""規則檔、輸入、prompt 組裝與解析、案例格式、表格顯示。全部不需金鑰。"""
+
+import json
 from pathlib import Path
 
 import pytest
 
-from coach import cli
-from coach.cases import load_case, load_cases
-from coach.prompt import OUTPUT_CONTRACT, build_messages, parse_reply
+from coach import inputs as inp
+from coach.cases import industry_number, load_case, load_cases, parse_answers
+from coach.display import render_table, width
+from coach.prompt import build_messages, inputs_message, parse_reply
 from coach.rules import load_rules
-from tests.fakes import ScriptedLLM, reply
 
 ROOT = Path(__file__).resolve().parent.parent
 
+ALL_FIELDS = dict(name="王主管", industry_no=9, product="P", sales="S", score=5, reason="R")
 
-@pytest.fixture
-def tmp_outputs(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli, "OUTPUTS_DIR", tmp_path)
-    monkeypatch.setattr(cli, "ROOT", tmp_path.parent)
-    return tmp_path
+
+def make_inputs(**over):
+    return inp.build_inputs(inp.parse_industries(load_rules().text), **{**ALL_FIELDS, **over})
+
+
+# ---- 規則檔 ---------------------------------------------------------------
 
 
 def test_rules_version_from_changelog(tmp_path):
@@ -36,104 +40,203 @@ def test_rules_without_changelog(tmp_path):
 def test_real_rules_file_loads():
     r = load_rules()
     assert r.version.startswith("v")
-    assert "行政管理等級表" in r.text
+    assert '"status":"clarify"' in r.text and '"status":"vfp"' in r.text
+
+
+# ---- 輸入 -----------------------------------------------------------------
+
+
+def test_industries_come_from_rules_file():
+    items = inp.parse_industries(load_rules().text)
+    assert len(items) == 20
+    assert items[0] == "餐飲業（餐廳、小吃、咖啡、飲料店）"
+    assert inp.is_other(items[19])
+    assert all(not inp.is_other(x) for x in items[:19])
+
+
+def test_industries_numbering_must_be_continuous():
+    with pytest.raises(ValueError):
+        inp.parse_industries("### 2.1 x\n  1. a\n  3. b\n")
+    with pytest.raises(ValueError):
+        inp.parse_industries("沒有清單")
+
+
+def test_question_texts_exist_in_rules_file():
+    text = load_rules().text
+    for q in (inp.Q_NAME, inp.Q_INDUSTRY, inp.Q_PRODUCT, inp.Q_SALES, inp.Q_SCORE, inp.Q_REASON):
+        assert q in text
+
+
+def test_build_inputs_stores_full_industry_text():
+    i = make_inputs(industry_no=1)
+    assert i["industry"] == "餐飲業（餐廳、小吃、咖啡、飲料店）" and i["industry_no"] == 1
+
+
+def test_other_industry_needs_text_and_is_stored_with_prefix():
+    with pytest.raises(ValueError):
+        make_inputs(industry_no=20)
+    assert make_inputs(industry_no=20, industry_other=" 修繕 ")["industry"] == "其他：修繕"
+
+
+def test_only_name_and_industry_are_required():
+    i = make_inputs(product="", sales="", score=None, reason="")
+    assert (i["product"], i["sales"], i["score"], i["reason"]) == ("", "", None, "")
+    with pytest.raises(ValueError):
+        make_inputs(name="  ")
+
+
+@pytest.mark.parametrize("bad", [0, 21, True, "9"])
+def test_bad_industry_number(bad):
+    with pytest.raises(ValueError):
+        make_inputs(industry_no=bad)
+
+
+@pytest.mark.parametrize("bad", [0, 11, True])
+def test_bad_score(bad):
+    with pytest.raises(ValueError):
+        make_inputs(score=bad)
+
+
+# ---- prompt ---------------------------------------------------------------
+
+
+def test_messages_are_rules_then_inputs_only():
+    r = load_rules()
+    msgs = build_messages(r, make_inputs(), [])
+    assert msgs == [{"role": "system", "content": r.text}, {"role": "user", "content": inputs_message(make_inputs())}]
+
+
+def test_blank_fields_are_sent_as_unfilled_and_score_reason_are_not_sent():
+    text = inputs_message(make_inputs(product="", sales="", reason="秘密原因", score=7))
+    assert text.count(inp.UNFILLED) == 2
+    assert "秘密原因" not in text and "7" not in text
+    assert "王主管" in text and "設計、廣告、行銷與攝影" in text
+
+
+def test_answered_exchanges_are_replayed_and_unanswered_one_is_not():
+    ex = [
+        {"coach": {"status": "clarify", "question": "Q1"}, "manager": "A1"},
+        {"coach": {"status": "clarify", "question": "Q2"}, "manager": None},
+    ]
+    msgs = build_messages(load_rules(), make_inputs(), ex)
+    assert [m["role"] for m in msgs] == ["system", "user", "assistant", "user"]
+    assert json.loads(msgs[2]["content"]) == ex[0]["coach"] and msgs[3]["content"] == "A1"
+
+
+# ---- 解析 -----------------------------------------------------------------
+
+GOOD_VFP = {"status": "vfp", "vfp": "V", "byproducts": [{"name": "a", "description": "b"}]}
+
+
+def test_parse_clarify_and_vfp():
+    c = parse_reply('{"status":"clarify","question":" Q? "}')
+    assert (c.status, c.question) == ("clarify", "Q?")
+    v = parse_reply("```json\n" + json.dumps(GOOD_VFP) + "\n```")
+    assert (v.status, v.vfp, v.byproducts) == ("vfp", "V", [{"name": "a", "description": "b"}])
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "not json",
+        "[]",
+        '{"status":"plan","message":"x"}',
+        '{"status":"clarify"}',
+        '{"status":"clarify","question":"  "}',
+        '{"status":"vfp","vfp":"","byproducts":[{"name":"a","description":"b"}]}',
+        '{"status":"vfp","vfp":"V"}',
+        '{"status":"vfp","vfp":"V","byproducts":[]}',
+        '{"status":"vfp","vfp":"V","byproducts":[{"name":"a"}]}',
+        '{"status":"vfp","vfp":"V","byproducts":[{"name":"","description":"b"}]}',
+        '{"status":"vfp","vfp":"V","byproducts":["a"]}',
+    ],
+)
+def test_unusable_replies_are_unknown(raw):
+    r = parse_reply(raw)
+    assert r.status == "unknown" and r.parse_error
+
+
+# ---- 案例 -----------------------------------------------------------------
 
 
 def test_cases_have_expected_status():
-    cases = load_cases(ROOT / "test_cases")
-    assert len(cases) >= 3
-    assert all(c.expected_status in ("plan", "clarify") for c in cases)
+    cases = {c.name: c for c in load_cases(ROOT / "test_cases")}
+    assert len(cases) == 5
+    assert all(c.expected_status in ("clarify", "vfp") for c in cases.values())
+    assert not any(c.todo for c in cases.values())
+    assert all(c.start_fields()["industry_no"] in range(1, 21) for c in cases.values())
 
 
-def test_bad_expected_status(tmp_path):
+def test_cases_without_answers_expect_clarify():
+    """沒有 answers 的案例只跑第一輪，不能期望 vfp（不替主管編回答）。"""
+    for c in load_cases(ROOT / "test_cases"):
+        if not c.answers():
+            assert c.expected_status == "clarify", c.name
+
+
+@pytest.mark.parametrize("case", load_cases(ROOT / "test_cases"), ids=lambda c: c.name)
+def test_case_industry_matches_rules_file_exactly(case):
+    """## 產業 必須是「編號 + 規則檔 2.1 同編號的完整原文」，名稱不符就失敗。"""
+    industries = inp.parse_industries(load_rules().text)
+    no = industry_number(case.sections["產業"])
+    assert case.sections["產業"] == f"{no} {industries[no - 1]}"
+
+
+def test_blank_product_case_has_blank_product():
+    assert load_case(ROOT / "test_cases" / "05_blank_product.md").start_fields()["product"] == ""
+
+
+def test_case_parsing_with_answers(tmp_path):
     p = tmp_path / "c.md"
-    p.write_text("---\nexpected_status: maybe\n---\nhi", encoding="utf-8")
+    p.write_text(
+        "---\nexpected_status: vfp\n---\n## 稱呼\n甲\n\n## 產業\n20\n\n## 其他產業說明\n乙\n\n## 自評分數\n6\n\n## answers\n- 第一\n- 第二\n  續行\n",
+        encoding="utf-8",
+    )
+    c = load_case(p)
+    f = c.start_fields()
+    assert (f["name"], f["industry_no"], f["industry_other"], f["score"]) == ("甲", 20, "乙", 6)
+    assert c.answers() == ["第一", "第二\n續行"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "---\nexpected_status: plan\n---\n## 稱呼\n甲\n\n## 產業\n1",
+        "---\nexpected_status: vfp\n---\n## 產業\n1",
+        "---\nexpected_status: vfp\n---\n## 稱呼\n甲\n\n## 產業\n九",
+        "---\nexpected_status: vfp\n---\n## 稱呼\n甲\n\n## 產業\n1\n\n## 自評分數\n高",
+    ],
+)
+def test_bad_case_files(tmp_path, text):
+    p = tmp_path / "c.md"
+    p.write_text(text, encoding="utf-8")
     with pytest.raises(ValueError):
         load_case(p)
 
 
-def test_messages_keep_rules_verbatim():
-    r = load_rules()
-    msgs = build_messages(r, "hello")
-    assert msgs[0] == {"role": "system", "content": r.text}
-    assert msgs[1]["content"] == OUTPUT_CONTRACT
-    assert msgs[2] == {"role": "user", "content": "hello"}
+def test_industry_number_may_be_followed_by_text():
+    assert industry_number("8") == 8
+    assert industry_number("8 資訊、軟體與網路服務") == 8
+    for bad in ("", "九", "資訊 8"):
+        with pytest.raises(ValueError):
+            industry_number(bad)
 
 
-@pytest.mark.parametrize(
-    "raw,status",
-    [
-        ('{"status":"plan","missing":[],"message":"x"}', "plan"),
-        ('```json\n{"status":"clarify","missing":["a"],"message":"q"}\n```', "clarify"),
-        ('{"status":"other","message":"x"}', "unknown"),
-        ("not json", "unknown"),
-    ],
-)
-def test_parse_reply(raw, status):
-    assert parse_reply(raw).status == status
+def test_parse_answers():
+    assert parse_answers("- a\n- b") == ["a", "b"]
+    assert parse_answers("") == []
 
 
-# 階段 1 的測試只管一般案例；週回報案例（kind: weekly）由 test_stage2 測
-CASES = [c for c in load_cases(ROOT / "test_cases") if c.kind != "weekly"]
+# ---- 表格顯示 -------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def only_stage1_cases(tmp_path_factory, monkeypatch):
-    """--all 只跑一般案例：複製到暫存資料夾再指給 cli。"""
-    d = tmp_path_factory.mktemp("cases")
-    for c in CASES:
-        (d / c.path.name).write_bytes(c.path.read_bytes())
-    monkeypatch.setattr(cli, "CASES_DIR", d)
-
-
-def _use(monkeypatch, llm):
-    monkeypatch.setattr(cli, "get_llm", lambda provider=None: llm)
-    return llm
-
-
-@pytest.mark.parametrize("case", CASES, ids=lambda c: c.name)
-def test_llm_receives_rules_and_case_verbatim(tmp_outputs, monkeypatch, case):
-    llm = _use(monkeypatch, ScriptedLLM(reply("plan")))
-    cli.main([str(case.path)])
-    (messages,) = llm.calls
-    assert messages[0] == {"role": "system", "content": load_rules().text}
-    assert messages[-1] == {"role": "user", "content": case.body}
-
-
-@pytest.mark.parametrize("case", CASES, ids=lambda c: c.name)
-def test_output_file_and_csv_record_metadata(tmp_outputs, monkeypatch, case):
-    _use(monkeypatch, ScriptedLLM(reply("clarify")))
-    cli.main([str(case.path)])
-    (out,) = (tmp_outputs / case.name).glob("*.md")
-    rules = load_rules()
-    assert f"rules-{rules.tag}" in out.name
-    text = out.read_text(encoding="utf-8")
-    for key in ("rules_version", "rules_sha256", "generated_at", "expected_status", "actual_status"):
-        assert f"{key}:" in text
-    with (tmp_outputs / "runs.csv").open(encoding="utf-8-sig") as f:
-        (row,) = list(csv.DictReader(f))
-    assert row["case"] == case.name and row["rules_sha8"] == rules.sha256[:8]
-    assert row["match"] == str(case.expected_status == "clarify")
-
-
-@pytest.mark.parametrize("status", ["plan", "clarify"])
-def test_exit_code_reflects_expected_vs_actual(tmp_outputs, monkeypatch, status):
-    _use(monkeypatch, ScriptedLLM(reply(status)))
-    code = cli.main(["--all"])
-    all_match = all(c.expected_status == status for c in CASES)
-    assert code == (0 if all_match else 1)
-
-
-def test_unparseable_reply_is_not_a_match(tmp_outputs, monkeypatch):
-    _use(monkeypatch, ScriptedLLM("not json"))
-    assert cli.main(["--all"]) == 1
-    assert "解析失敗" in next(tmp_outputs.rglob("*.md")).read_text(encoding="utf-8")
-
-
-def test_dry_run_never_calls_llm(tmp_outputs, monkeypatch, capsys):
-    def boom(provider=None):
-        raise AssertionError("dry-run 不應建立 LLM client")
-
-    monkeypatch.setattr(cli, "get_llm", boom)
-    assert cli.main(["--all", "--dry-run"]) == 0
-    assert not (tmp_outputs / "runs.csv").exists()
+def test_table_lines_have_equal_display_width():
+    t = render_table("吃到好吃且想再來的客人", [{"name": "購買食材", "description": "麵條、豬骨、配料"}, {"name": "A", "description": "x" * 120}])
+    widths = {width(line) for line in t.splitlines()}
+    assert len(widths) == 1
+    lines = t.splitlines()
+    assert "VFP" in lines[1] and "吃到好吃且想再來的客人" in lines[1]
+    assert "副產品" in lines[3] and "說明" in lines[3]
+    assert lines[4].startswith("+=")
+    # 副產品由上到下維持輸入順序
+    assert t.index("購買食材") < t.index("| A ")

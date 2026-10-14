@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>管到飛</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="page">
+    <header class="brand">
+      <img class="logo" src="/static/logo.png" alt="" onerror="this.remove()">
+      <div>
+        <h1>管到飛</h1>
+        <div class="accent-bar"></div>
+        <p class="subtitle">每週陪跑教練，一上任就帶大家起飛</p>
+      </div>
+    </header>
+
+    <div id="error" class="error" role="alert" hidden></div>
+
+    <!-- 1. 表單 -->
+    <section id="form-card" class="card">
+      <form id="start-form" novalidate>
+        <div class="field">
+          <label for="name">該如何稱呼您？ <span class="req">必填</span></label>
+          <input id="name" type="text" autocomplete="off" placeholder="例如：楊主管、林先生、張董">
+        </div>
+
+        <div class="field">
+          <label for="industry">你在哪個產業？ <span class="req">必填</span></label>
+          <div class="industry-row">
+            <div class="industry-input">
+              <input id="industry" type="number" min="1" inputmode="numeric" placeholder="輸入編號">
+              <p class="hint">輸入右側（手機為下方）清單的編號，也可以直接點選清單項目。</p>
+              <div id="other-field" class="field" hidden>
+                <label for="industry-other">請填寫你的產業 <span class="req">必填</span></label>
+                <input id="industry-other" type="text" autocomplete="off">
+              </div>
+            </div>
+            <ol id="industry-list" class="industry-list" aria-label="產業清單"></ol>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="product">你覺得自己／團隊／公司在賣什麼產品？</label>
+          <textarea id="product" rows="2" placeholder="實體物品或無實體的服務都可以（可空白）"></textarea>
+        </div>
+        <div class="field">
+          <label for="sales">賣的如何？</label>
+          <textarea id="sales" rows="2" placeholder="不一定要有數據，至少說好或壞的程度（可空白）"></textarea>
+        </div>
+        <div class="field">
+          <label for="score">為自己的營運打個分數（1～10 分）</label>
+          <input id="score" type="number" min="1" max="10" inputmode="numeric" placeholder="可空白">
+        </div>
+        <div class="field">
+          <label for="reason">為何給這個分數？</label>
+          <textarea id="reason" rows="2" placeholder="可空白"></textarea>
+        </div>
+
+        <button id="start-btn" class="btn" type="submit">開始</button>
+      </form>
+    </section>
+
+    <!-- 2. 對話 -->
+    <section id="chat-card" class="card" hidden>
+      <div id="chat" class="chat" aria-live="polite"></div>
+      <div id="loading" class="loading" hidden>教練思考中<span class="dots"><i></i><i></i><i></i></span></div>
+      <form id="answer-form" class="answer-form">
+        <label for="answer" class="sr-only">你的回答</label>
+        <textarea id="answer" rows="3" placeholder="輸入你的回答"></textarea>
+        <button id="answer-btn" class="btn" type="submit">送出回答</button>
+      </form>
+    </section>
+
+    <!-- 3. 結果 -->
+    <section id="result-card" class="card" hidden>
+      <h2>你的最終有價值產品與副產品</h2>
+      <p class="hint">副產品由源頭排到終點。可以直接修改文字、調整順序、刪除或新增，改完按「儲存」。</p>
+      <table class="result-table">
+        <thead>
+          <tr class="vfp-row">
+            <th scope="row" class="vfp-label">VFP</th>
+            <td colspan="2"><textarea id="vfp" rows="2" aria-label="VFP"></textarea></td>
+          </tr>
+          <tr class="head-row">
+            <th class="col-name">副產品</th>
+            <th class="col-desc">說明</th>
+            <th class="col-act"><span class="sr-only">操作</span></th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div class="result-actions">
+        <button id="add-btn" class="btn btn-ghost" type="button">＋ 新增副產品</button>
+        <button id="save-btn" class="btn" type="button">儲存</button>
+        <span id="save-msg" class="save-msg" role="status"></span>
+      </div>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,43 +1,58 @@
-# 管到飛 — 每週陪跑教練，一上任就帶團隊起飛
+# 管到飛 — 帶主管推理出團隊的最終有價值產品（VFP），再拆成副產品
 
 ## 產品目標
-給剛上任的中小企業主管用的每週 AI 陪跑教練：
-1. 主管輸入「理想情境」（電影畫面般的具體場景）與「現在情境」
-2. 系統依規則檔的「行政管理等級表」（10 級）產出計畫；資訊不足時**追問**，不硬產出
-3. 主管給「執行信心分數」(0–100)，< 80 就來回調整，≥ 80 才執行
-4. 一週後主管回報實際狀況與成果分數 → 產出調整後的新等級表（標示與上週差異）
+給剛上任的中小企業主管用的 AI 陪跑教練：
+1. 主管輸入六項：稱呼、產業（規則檔 2.1 的編號清單）、在賣什麼產品、賣得如何、營運自評 1～10 分、給分原因
+2. 系統用「客人狀態」的問法**一次問一個問題**，引導主管說出團隊交付給誰、讓對方變成什麼狀態
+3. 資訊足夠時產出一句話的 VFP，再拆成「副產品」（由源頭排到終點）；資訊不足就追問，不硬產出
+4. 產出後主管可以修改 VFP 與副產品（保留模型原始版本與主管修改版本）
 
 ## 規則檔（產品的大腦）
 - 位置：`coach_rules.md`（專案根目錄）
 - **不可由 AI 修改內容**。發現矛盾或缺漏 → 列出來問使用者。
-- 版本：取自檔尾「版本紀錄」表最後一列（例如 `v0.1`）＋ 檔案 SHA-256 前 8 碼（沒升版號但改了內容也分得出來）。
-- 程式附加的「輸出約定」(JSON 格式) 在 `coach/prompt.py`，不寫進規則檔。
+- 版本：取自檔尾「版本紀錄」表最後一列（例如 `v0.4`）＋ 檔案 SHA-256 前 8 碼。
+- **輸出約定（clarify / vfp 兩種 JSON）以規則檔第 5 章為唯一來源**。`coach/prompt.py` 不附加任何格式說明，只組 messages 與解析。
+- 產業清單從規則檔 2.1 讀取（`coach/inputs.py`），程式不寫死。
+- 表格怎麼畫（命令列文字表格、之後的網頁）由程式負責，與規則檔無關。
 
 ## 專案結構
 ```
 coach_rules.md        規則檔（使用者維護）
 coach/
   rules.py            讀規則檔、算版本
-  cases.py            讀測試案例
-  prompt.py           組 messages、解析模型回覆（含信心調整、週回報兩段的輸出約定）
+  inputs.py           六項輸入的題目文字、產業清單解析（規則檔 2.1）、驗證
+  cases.py            讀測試案例（含 answers 多輪腳本、todo 待補標記）
+  prompt.py           組 messages（規則檔當 system）、解析 clarify / vfp 回覆
   llm.py              LLM 抽象層（azure / openai），換供應商只改這裡
-  cli.py              測試案例執行器（含 kind: weekly 的週回報案例）
-  flow.py             對話狀態機（clarify → plan → ready → 週回報 → plan…），API 與 chat 共用
-  store.py            session 存取（JSON 檔）；換資料庫只換這一層
-  api.py              最小 FastAPI
-  chat.py             互動式命令列，不開網頁跑完整流程
+  flow.py             對話狀態機（clarify → vfp），API 與 chat 共用；含 edit_result
+  store.py            session 存取（JSON 檔）
+  display.py          命令列文字表格（處理中文字寬度）
+  cli.py              測試案例執行器（多輪、安全上限 10 輪）
+  chat.py             互動式命令列
+  api.py              FastAPI：GET /industries、POST /sessions、POST /sessions/{id}/answer、PUT /sessions/{id}/byproducts、GET /sessions/{id}
 test_cases/           測試輸入（*.md，front matter 有 expected_status）
-outputs/              每次執行的輸出（依案例分資料夾）+ runs.csv 總表；sessions/<id>.json 是對話紀錄
+outputs/              每次執行的輸出（依案例分資料夾）+ runs.csv；sessions/<id>.json 是對話紀錄
 tests/                pytest（用 tests/fakes.py 的替身，不需金鑰；不驗證規則效果）
 ```
 
+## session 與狀態
+- `status` 只有 `clarify`（等主管回答一個問題）與 `vfp`（已產出）。「收集輸入」只是建立 session 時的驗證。
+- 只有稱呼、產業必填；其餘空白以「（未填）」送模型，由模型追問。
+- 自評分數與原因只存檔，不送模型。
+- 追問輪數產品沒有上限；vfp 之後 `answer` 回 409。
+- 模型回覆無法解析 → 不存檔，可重送。
+
+## 案例格式（test_cases/*.md）
+front matter：`title`、`expected_status`（clarify | vfp）、選用 `todo: 待補`（會被跳過）。
+內文分段：`## 稱呼 / 產業（編號）/ 其他產業說明 / 產品 / 賣得如何 / 自評分數 / 原因 / answers`；
+`answers` 一行 `- ` 一個回答，依序回答追問。沒有 answers 的案例只跑第一輪。
+
 ## 階段
-- [x] 階段 0：規劃 + CLAUDE.md
-- [x] 階段 1：CLI 腳本（讀規則 → 讀案例 → 呼叫 LLM → 輸出檔案）
-- [x] 階段 2-lite：信心分數來回調整 + 週回報 + 最小 FastAPI（session 存 JSON 檔，不接資料庫）
-- [ ] 階段 2：PostgreSQL（SQLAlchemy + Alembic），換掉 store.py
-- [ ] 階段 3：Flutter Web
-- [ ] 階段 4：部署（Render / Neon / 靜態託管）、CORS
+- [x] 階段 0：規劃
+- [x] 階段 1：核心流程（命令列）
+- [x] 階段 2：API（POST /sessions、POST /sessions/{id}/answer、GET /sessions/{id}、PUT /sessions/{id}/byproducts）
+- [ ] 階段 3：網頁（FastAPI 在 `/` 提供一頁 HTML，檔案在 coach/web/）← 進行中，等使用者確認
+- [ ] 階段 4：發表保險（demo fixture、DEMO 模式）
 
 每階段做完先停，等使用者確認。
 
@@ -48,15 +63,16 @@ python -m venv .venv
 pip install -r requirements.txt
 copy .env.example .env      # 填入 Azure OpenAI 端點/金鑰/部署名
 
-python -m coach.cli --all                          # 跑全部案例
-python -m coach.cli test_cases/01_noodle_shop.md   # 跑單一案例
-python -m coach.cli --all --dry-run                # 不呼叫 LLM，寫到 outputs/_dry_run/*.md
+python -m coach.cli --all                          # 跑全部案例（待補的略過）
+python -m coach.cli test_cases/01_design_vague.md  # 跑單一案例
+python -m coach.cli --all --dry-run                # 不呼叫 LLM，第一輪 messages 寫到 outputs/_dry_run/*.md
 
 uvicorn coach.api:app --reload                     # API，開 http://127.0.0.1:8000/docs
-python -m coach.chat                               # 互動式命令列（--case / --resume / --weekly / --list）
+python -m coach.chat                               # 互動式命令列（--case / --resume / --list）
 ```
 輸出：`outputs/<案例>/<時間>__rules-<版本>-<sha8>.md`，並追加一列到 `outputs/runs.csv`。
-所有案例的 actual_status 與 expected_status 一致 → exit 0，否則 exit 1。
+所有（非待補）案例的 actual_status 與 expected_status 一致 → exit 0，否則 exit 1。
+一個案例最多呼叫模型 10 次，超過標記失敗（over_limit），只為避免失控花費。
 
 ## 測試
 ```powershell
@@ -65,7 +81,7 @@ pytest -q
 
 ## 安全規則
 - **絕不 commit `.env` 或任何金鑰**。只提交 `.env.example`。
-- 前端（階段 3）只呼叫自家後端，不放任何金鑰。
+- 前端只呼叫自家後端，不放任何金鑰。
 - 不編造使用者沒提供的資料（數字、人名、事實）。
 
 ## 程式風格
