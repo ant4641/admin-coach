@@ -53,6 +53,7 @@ async function request(method, path, body) {
   }
   if (res.status === 502) throw apiError("教練的回覆格式有誤，請再按一次送出", 502);
   if (res.status === 503) throw apiError("目前無法連線到模型，請稍後再試", 503);
+  if (res.status === 429) throw apiError("目前使用的人比較多，請稍後再試", 429);
   if (data && typeof data.detail === "string") throw apiError(data.detail, res.status);
   throw apiError(`請求失敗（${res.status}）`, res.status);
 }

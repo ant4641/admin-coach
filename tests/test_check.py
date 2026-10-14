@@ -63,14 +63,38 @@ class APIConnectionError(Exception):
     pass
 
 
-def run(capsys, llm=None, port_busy=False, web=check.WEB, env_file=None, factory=None):
+class FakeTunnel:
+    """對外通道的替身：不啟動 ngrok、不連網。"""
+
+    def __init__(self, url="https://abc.ngrok-free.app", reason=None):
+        self.url, self.reason, self.started, self.stopped = url, reason, False, False
+
+    def start(self):
+        from coach.tunnel import TunnelResult
+
+        self.started = True
+        return TunnelResult(self.url, self.reason)
+
+    def stop(self):
+        self.stopped = True
+
+    def is_running(self):
+        return False
+
+
+def run(capsys, llm=None, port_busy=False, web=check.WEB, env_file=None, factory=None, **outbound):
+    """outbound：ngrok_version_fn / qrcode_probe / tunnel_factory；預設是「全部正常」的替身，不會連網。"""
     llm = llm or FakeLLM()
+    outbound.setdefault("ngrok_version_fn", lambda: "ngrok version 3.0.0")
+    outbound.setdefault("qrcode_probe", lambda: True)
+    outbound.setdefault("tunnel_factory", FakeTunnel)
     code = check.main(
         [],
         llm_factory=factory or (lambda: llm),
         port_probe=lambda p: port_busy,
         env_file=env_file or Path("/nonexistent/.env"),
         web=web,
+        **outbound,
     )
     return code, capsys.readouterr().out, llm
 
@@ -260,10 +284,9 @@ def test_run_bat_has_required_commands():
     t = _bat("run.bat")
     assert 'cd /d "%~dp0.."' in t  # bat/ 的上一層才是專案根目錄
     assert ".venv\\Scripts\\activate.bat" in t and "找不到 .venv" in t
-    assert "http://127.0.0.1:8000/" in t and "start" in t
-    commands = [ln for ln in t.splitlines() if not ln.lower().startswith("rem ")]  # 註解可以提到 --reload
-    assert any("uvicorn coach.api:app" in ln for ln in commands)
-    assert not any("--reload" in ln for ln in commands)
+    commands = [ln for ln in t.splitlines() if not ln.lower().startswith(("rem ", "echo"))]
+    assert any(ln.strip() == "python -m coach.launch" for ln in commands)  # 啟動改由 coach.launch 負責
+    assert not any("--no-tunnel" in ln for ln in commands)
     assert t.rstrip().endswith("pause")
 
 
@@ -283,7 +306,8 @@ def test_no_ps1_scripts_and_no_bat_left_in_root():
 def test_vscode_tasks_define_both_tasks():
     data = json.loads((ROOT / ".vscode" / "tasks.json").read_text(encoding="utf-8"))
     tasks = {t["label"]: t for t in data["tasks"]}
-    assert set(tasks) == {"管到飛：啟動", "管到飛：發表前檢查"}
+    assert set(tasks) == {"管到飛：啟動", "管到飛：啟動（僅本機）", "管到飛：發表前檢查"}
+    assert tasks["管到飛：啟動（僅本機）"]["command"].endswith("bat\\run_local.bat")
     assert tasks["管到飛：啟動"]["command"].endswith("bat\\run.bat")
     check_task = tasks["管到飛：發表前檢查"]
     assert check_task["args"] == ["-m", "coach.check"] and "python" in check_task["command"]
@@ -291,7 +315,7 @@ def test_vscode_tasks_define_both_tasks():
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="找不到 git")
 def test_bat_files_and_tasks_are_not_gitignored():
-    for path in ("bat/run.bat", "bat/check.bat", ".vscode/tasks.json"):
+    for path in ("bat/run.bat", "bat/run_local.bat", "bat/check.bat", ".vscode/tasks.json"):
         r = subprocess.run(["git", "check-ignore", "-q", path], cwd=ROOT)
         assert r.returncode == 1, f"{path} 被 .gitignore 排除了"
     # 其他 .vscode 檔案仍照舊排除

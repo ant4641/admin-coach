@@ -15,15 +15,11 @@ if not exist ".venv\Scripts\activate.bat" (
 )
 call ".venv\Scripts\activate.bat"
 
-echo 管到飛啟動中，稍後會自動開啟 http://127.0.0.1:8000/
-echo 要結束請關閉這個視窗，或按 Ctrl+C。
+echo 管到飛啟動中（含對外網址）。要結束請按 Ctrl+C 或關閉這個視窗。
+echo 請不要在同一台電腦重複開多個 run.bat。
 echo.
-rem 等伺服器起來再開瀏覽器，避免開得太早連不上
-start "" cmd /c "timeout /t 3 /nobreak >nul & start "" http://127.0.0.1:8000/"
-
-rem 不用 --reload：現場檔案變動時不要自動重啟
-python -m uvicorn coach.api:app --host 127.0.0.1 --port 8000
+python -m coach.launch
 
 echo.
-echo 伺服器已停止。
+echo 已結束。
 pause

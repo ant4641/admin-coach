@@ -31,6 +31,9 @@ coach/
   chat.py             互動式命令列
   export.py           匯出 Excel（openpyxl）
   check.py            發表前檢查（python -m coach.check）
+  launch.py           發表用啟動（uvicorn + ngrok 公開網址 + QR + 開瀏覽器）；python -m coach.launch [--no-tunnel]
+  tunnel.py           ngrok 通道、網址檔、QR（SVG）的純函式與可替換元件
+  ratelimit.py        記憶體限流與來源 IP 判斷
   api.py              FastAPI：GET /industries、POST /sessions、POST /sessions/{id}/answer、PUT /sessions/{id}/byproducts、GET /sessions/{id}、GET /sessions/{id}/export.xlsx，並在 / 提供網頁
   web/                三頁網頁（index.html、style.css、app.js、intake.js、export-image.js）；intake.js 是六題的狀態邏輯（純函式，不碰 DOM）；assets/ 放 sky.jpg、logo.png（選用）、icons/*.svg；全部本機提供，不用 CDN
 test_cases/           測試輸入（*.md，front matter 有 expected_status）
@@ -75,9 +78,22 @@ python -m coach.check                             # 發表前檢查：模型連�
 python -m coach.chat                               # 互動式命令列（--case / --resume / --list）
 ```
 Windows 雙擊（不用 .ps1，避免執行原則被擋）：
-- `bat/run.bat`：啟用 .venv、開瀏覽器到 http://127.0.0.1:8000/、啟動 uvicorn（不用 --reload），結束前 pause
+- `bat/run.bat`：啟用 .venv、呼叫 `python -m coach.launch`（啟動 uvicorn、ngrok 公開網址、QR、開兩個分頁），結束前 pause
+- `bat/run_local.bat`：同上但加 `--no-tunnel`，只在本機執行
 - `bat/check.bat`：啟用 .venv、跑 `python -m coach.check`，最後 pause
-- VS Code：Terminal > Run Task > 「管到飛：啟動」或「管到飛：發表前檢查」（`.vscode/tasks.json` 有進版控）
+- VS Code：Terminal > Run Task > 「管到飛：啟動」「管到飛：啟動（僅本機）」「管到飛：發表前檢查」（`.vscode/tasks.json` 有進版控）
+
+### 現場操作順序（發表用）
+1. 雙擊 `bat/check.bat`：確認 Azure、網頁檔案、ngrok、qrcode、對外通道（會短暫開一條通道再關掉）都 OK
+2. 雙擊 `bat/run.bat`：等兩個分頁自動打開（首頁 `/`、QR 頁 `/qr`）
+3. 把 `/qr` 那個分頁投影出來，觀眾掃描就能試用；第一次開啟若看到 ngrok 的提醒頁，請按 Visit Site
+4. 結束：在 run 視窗按 Ctrl+C 或直接關視窗（uvicorn 與 ngrok 都會一起結束）
+
+注意：
+- **不要在同一台電腦重複開多個 run.bat**（8000 連接埠會被占用，啟動程式會提示先關閉舊的視窗）。
+- 取不到公開網址（ngrok 不存在、authtoken 無效、網路被擋、逾時）不會中止，伺服器照常運作，`/qr` 顯示「目前沒有公開網址」；網路被擋時建議改用手機熱點。authtoken 要重設：`ngrok config add-authtoken <token>`。
+- 每次啟動都會先刪掉 `outputs/qr/`，再寫入新的 `public_url.txt` 與 `qr.svg`。`/qr` 優先讀 `public_url.txt`，沒有才用環境變數 `PUBLIC_URL`。
+- 會呼叫模型的端點（POST /sessions、POST /sessions/{id}/answer）有記憶體限流：每個來源 IP 每 10 分鐘 30 次、全站每小時 300 次，超過回 429「目前使用的人比較多，請稍後再試」。可用環境變數 `RATE_LIMIT_IP_MAX`、`RATE_LIMIT_IP_WINDOW_SECONDS`、`RATE_LIMIT_GLOBAL_MAX`、`RATE_LIMIT_GLOBAL_WINDOW_SECONDS` 調整。來源 IP 依序取 `CF-Connecting-IP`、`X-Forwarded-For` 第一個值、連線位址。
 
 檢查失敗時會用中文說明：401 金鑰錯、404 部署名稱錯、400 API version 錯（要填 API 版本如 2024-10-21，不是模型版本）、逾時或連線失敗、`.env` 缺哪個欄位。金鑰不會被印出。
 

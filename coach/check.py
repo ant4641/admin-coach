@@ -17,6 +17,7 @@ from typing import Callable
 from dotenv import load_dotenv
 
 from coach.llm import LLMClient, get_llm
+from coach import tunnel as tunnel_mod
 from coach.rules import load_rules
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -138,12 +139,66 @@ def check_port(probe: Callable[[int], bool], port: int = PORT) -> bool:
     return _line(not busy, f"{port} 連接埠", "可使用" if not busy else "已被占用（可能已經有一個在跑，先關掉再啟動）")
 
 
+def qrcode_ok() -> bool:
+    try:
+        return "<svg" in tunnel_mod.make_qr_svg("https://example.com/")
+    except Exception:  # noqa: BLE001 - 沒安裝或壞掉都算不可用
+        return False
+
+
+def check_outbound(
+    port_busy: bool,
+    ngrok_version_fn: Callable[[], str | None],
+    qrcode_probe: Callable[[], bool],
+    tunnel_factory: Callable[[], tunnel_mod.Tunnel],
+) -> bool:
+    """對外功能：ngrok 是否安裝、qrcode 套件、對外通道實測。失敗只標「提醒」，由結束碼反映。"""
+    print("\n對外功能")
+    version = ngrok_version_fn()
+    ngrok_ok = _line(version is not None, "ngrok", version or tunnel_mod.explain_reason("not_found"))
+    qr_available = qrcode_probe()
+    qr_ok = _line(qr_available, "qrcode 套件", "可用" if qr_available else "不可用（執行 pip install -r requirements.txt）")
+
+    if port_busy:
+        _line(True, "對外通道實測", "略過：8000 已被占用，表示伺服器正在跑（不會另開通道干擾它）")
+        return ngrok_ok and qr_ok
+    if not ngrok_ok:
+        _line(True, "對外通道實測", "略過：沒有 ngrok（上面已提醒）")
+        return False
+
+    tunnel = tunnel_factory()
+    try:
+        result = tunnel.start()
+    except Exception as e:  # noqa: BLE001
+        result = tunnel_mod.TunnelResult(None, "exited")
+        print(f"      （通道啟動時發生錯誤：{type(e).__name__}）")
+    finally:
+        try:
+            tunnel.stop()
+        except Exception:  # noqa: BLE001
+            pass
+    leftover = tunnel.is_running()
+    if result.url:
+        _line(True, "對外通道實測", f"取得公開網址 {result.url}")
+        tunnel_ok = _line(not leftover, "通道已關閉", "沒有殘留程序" if not leftover else "ngrok 還在執行，請到工作管理員結束 ngrok")
+    else:
+        tunnel_ok = _line(False, "對外通道實測", "取不到公開網址")
+        print(f"      原因：{tunnel_mod.explain_reason(result.reason or '')}")
+        if leftover:
+            _line(False, "通道已關閉", "ngrok 還在執行，請到工作管理員結束 ngrok")
+            tunnel_ok = False
+    return ngrok_ok and qr_ok and tunnel_ok
+
+
 def main(
     argv: list[str] | None = None,
     llm_factory: Callable[[], LLMClient] = get_llm,
     port_probe: Callable[[int], bool] = port_in_use,
     env_file: Path = ROOT / ".env",
     web: Path = WEB,
+    ngrok_version_fn: Callable[[], str | None] = tunnel_mod.ngrok_version,
+    qrcode_probe: Callable[[], bool] = qrcode_ok,
+    tunnel_factory: Callable[[], tunnel_mod.Tunnel] | None = None,
 ) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -166,8 +221,11 @@ def main(
         model_ok = check_model(llm_factory, provider)
     files_ok = check_files(web)
     port_ok = check_port(port_probe)
+    port_busy = not port_ok
+    factory = tunnel_factory or (lambda: tunnel_mod.NgrokTunnel(PORT, log_path=ROOT / "outputs" / "ngrok_check.log"))
+    outbound_ok = check_outbound(port_busy, ngrok_version_fn, qrcode_probe, factory)
 
-    all_ok = rules_ok and env_exists and model_ok and files_ok and port_ok
+    all_ok = rules_ok and env_exists and model_ok and files_ok and port_ok and outbound_ok
     print("\n全部 OK，可以發表。" if all_ok else "\n有項目需要處理，請看上面標示「提醒」的地方。")
     return 0 if all_ok else 1
 

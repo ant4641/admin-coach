@@ -10,6 +10,14 @@
       "problemMatcher": []
     },
     {
+      "label": "管到飛：啟動（僅本機）",
+      "type": "shell",
+      "command": "${workspaceFolder}\\bat\\run_local.bat",
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "problemMatcher": []
+    },
+    {
       "label": "管到飛：發表前檢查",
       "type": "shell",
       "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
