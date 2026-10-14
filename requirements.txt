@@ -4,3 +4,4 @@ fastapi>=0.110
 uvicorn>=0.29
 pytest>=8.0
 httpx>=0.27  # FastAPI TestClient 需要
+openpyxl>=3.1  # 匯出 Excel

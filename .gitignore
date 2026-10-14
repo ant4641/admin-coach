@@ -13,7 +13,8 @@ venv/
 .ruff_cache/
 
 # IDE / OS
-.vscode/
+.vscode/*
+!.vscode/tasks.json
 .idea/
 Thumbs.db
 .DS_Store

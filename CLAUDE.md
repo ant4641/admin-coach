@@ -29,10 +29,13 @@ coach/
   display.py          命令列文字表格（處理中文字寬度）
   cli.py              測試案例執行器（多輪、安全上限 10 輪）
   chat.py             互動式命令列
-  api.py              FastAPI：GET /industries、POST /sessions、POST /sessions/{id}/answer、PUT /sessions/{id}/byproducts、GET /sessions/{id}
+  export.py           匯出 Excel（openpyxl）
+  check.py            發表前檢查（python -m coach.check）
+  api.py              FastAPI：GET /industries、POST /sessions、POST /sessions/{id}/answer、PUT /sessions/{id}/byproducts、GET /sessions/{id}、GET /sessions/{id}/export.xlsx，並在 / 提供網頁
+  web/                三頁網頁（index.html、style.css、app.js、intake.js、export-image.js）；intake.js 是六題的狀態邏輯（純函式，不碰 DOM）；assets/ 放 sky.jpg、logo.png（選用）、icons/*.svg；全部本機提供，不用 CDN
 test_cases/           測試輸入（*.md，front matter 有 expected_status）
 outputs/              每次執行的輸出（依案例分資料夾）+ runs.csv；sessions/<id>.json 是對話紀錄
-tests/                pytest（用 tests/fakes.py 的替身，不需金鑰；不驗證規則效果）
+tests/                pytest；tests/js/ 是 node 內建 test runner 的前端邏輯測試（pytest 會呼叫，找不到 node 就跳過）（用 tests/fakes.py 的替身，不需金鑰；不驗證規則效果）
 ```
 
 ## session 與狀態
@@ -51,8 +54,8 @@ front matter：`title`、`expected_status`（clarify | vfp）、選用 `todo: �
 - [x] 階段 0：規劃
 - [x] 階段 1：核心流程（命令列）
 - [x] 階段 2：API（POST /sessions、POST /sessions/{id}/answer、GET /sessions/{id}、PUT /sessions/{id}/byproducts）
-- [ ] 階段 3：網頁（FastAPI 在 `/` 提供一頁 HTML，檔案在 coach/web/）← 進行中，等使用者確認
-- [ ] 階段 4：發表保險（demo fixture、DEMO 模式）
+- [ ] 階段 3：網頁（#/ 首頁 → #/chat 對話 → #/result 結果；匯出 Excel／JPG）← 進行中，等使用者確認
+- [ ] 階段 4：發表保險（精簡版：檢查指令、.bat、VS Code 任務已完成；DEMO 模式暫不做）
 
 每階段做完先停，等使用者確認。
 
@@ -67,9 +70,17 @@ python -m coach.cli --all                          # 跑全部案例（待補的
 python -m coach.cli test_cases/01_design_vague.md  # 跑單一案例
 python -m coach.cli --all --dry-run                # 不呼叫 LLM，第一輪 messages 寫到 outputs/_dry_run/*.md
 
-uvicorn coach.api:app --reload                     # API，開 http://127.0.0.1:8000/docs
+uvicorn coach.api:app --reload                     # 網頁 http://127.0.0.1:8000/ ，API 文件 /docs
+python -m coach.check                             # 發表前檢查：模型連線、網頁檔案、sky/logo、8000 連接埠（全部 OK 結束碼 0）
 python -m coach.chat                               # 互動式命令列（--case / --resume / --list）
 ```
+Windows 雙擊（不用 .ps1，避免執行原則被擋）：
+- `bat/run.bat`：啟用 .venv、開瀏覽器到 http://127.0.0.1:8000/、啟動 uvicorn（不用 --reload），結束前 pause
+- `bat/check.bat`：啟用 .venv、跑 `python -m coach.check`，最後 pause
+- VS Code：Terminal > Run Task > 「管到飛：啟動」或「管到飛：發表前檢查」（`.vscode/tasks.json` 有進版控）
+
+檢查失敗時會用中文說明：401 金鑰錯、404 部署名稱錯、400 API version 錯（要填 API 版本如 2024-10-21，不是模型版本）、逾時或連線失敗、`.env` 缺哪個欄位。金鑰不會被印出。
+
 輸出：`outputs/<案例>/<時間>__rules-<版本>-<sha8>.md`，並追加一列到 `outputs/runs.csv`。
 所有（非待補）案例的 actual_status 與 expected_status 一致 → exit 0，否則 exit 1。
 一個案例最多呼叫模型 10 次，超過標記失敗（over_limit），只為避免失控花費。

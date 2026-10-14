@@ -6,99 +6,114 @@
   <title>管到飛</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
+<body class="page-home">
+  <!-- 首頁天空：有 assets/sky.jpg 就蓋在 CSS 天空上，沒有就只看 CSS 天空 -->
+  <div class="sky" aria-hidden="true">
+    <img class="sky-probe" src="/static/assets/sky.jpg" alt="" onload="this.parentNode.classList.add('has-photo')" onerror="this.remove()">
+    <span class="orb orb-1"></span><span class="orb orb-2"></span>
+    <span class="cloud c1"></span><span class="cloud c2"></span><span class="cloud c3"></span>
+  </div>
+
   <main class="page">
     <header class="brand">
-      <img class="logo" src="/static/logo.png" alt="" onerror="this.remove()">
-      <div>
+      <img class="logo" src="/static/assets/logo.png" alt="" onerror="this.remove()">
+      <div class="brand-text">
         <h1>管到飛</h1>
         <div class="accent-bar"></div>
         <p class="subtitle">每週陪跑教練，一上任就帶大家起飛</p>
       </div>
+      <img class="wings" src="/static/assets/wings.svg" alt="" aria-hidden="true">
     </header>
 
     <div id="error" class="error" role="alert" hidden></div>
 
-    <!-- 1. 表單 -->
-    <section id="form-card" class="card">
-      <form id="start-form" novalidate>
-        <div class="field">
-          <label for="name">該如何稱呼您？ <span class="req">必填</span></label>
-          <input id="name" type="text" autocomplete="off" placeholder="例如：楊主管、林先生、張董">
+    <!-- #/ 首頁 -->
+    <section id="page-home" data-page="home">
+      <div class="services">
+        <div class="service disabled" aria-disabled="true">
+          <img class="service-icon" src="/static/assets/icons/hat.svg" alt="" width="96" height="96">
+          <h2>職位的帽子</h2>
+          <span class="tag">即將推出</span>
         </div>
+        <a class="service active" href="#/chat" id="service-appraisal">
+          <img class="service-icon" src="/static/assets/icons/gold.svg" alt="" width="96" height="96">
+          <h2>產品鑑定</h2>
+          <p>找出你的最終有價值產品，並拆解副產品</p>
+        </a>
+        <div class="service disabled" aria-disabled="true">
+          <img class="service-icon" src="/static/assets/icons/wand.svg" alt="" width="96" height="96">
+          <h2>行政管理等級表</h2>
+          <span class="tag">即將推出</span>
+        </div>
+      </div>
+    </section>
 
-        <div class="field">
-          <label for="industry">你在哪個產業？ <span class="req">必填</span></label>
-          <div class="industry-row">
-            <div class="industry-input">
-              <input id="industry" type="number" min="1" inputmode="numeric" placeholder="輸入編號">
-              <p class="hint">輸入右側（手機為下方）清單的編號，也可以直接點選清單項目。</p>
-              <div id="other-field" class="field" hidden>
-                <label for="industry-other">請填寫你的產業 <span class="req">必填</span></label>
-                <input id="industry-other" type="text" autocomplete="off">
-              </div>
-            </div>
-            <ol id="industry-list" class="industry-list" aria-label="產業清單"></ol>
+    <!-- #/chat 對話頁 -->
+    <section id="page-chat" data-page="chat" hidden>
+      <div class="card">
+        <div id="chat" class="chat" aria-live="polite"></div>
+        <div id="loading" class="loading" hidden><span id="loading-text">教練思考中…</span><span class="dots"><i></i><i></i><i></i></span></div>
+        <div id="chat-done" class="chat-done" hidden>
+          <p id="done-label" class="done-label">對話已完成</p>
+          <button id="to-result" class="btn" type="button">打開最終結果</button>
+        </div>
+        <form id="answer-form" class="answer-form">
+          <label for="answer" class="sr-only">你的回答</label>
+          <textarea id="answer" rows="2" placeholder="輸入你的回答"></textarea>
+          <p id="answer-hint" class="answer-hint" role="alert" hidden></p>
+          <div class="answer-buttons">
+            <button id="prev-btn" class="btn btn-ghost" type="button" hidden>← 上一題</button>
+            <button id="answer-btn" class="btn" type="submit">送出</button>
+          </div>
+        </form>
+        <div class="chat-reset">
+          <button id="reset-btn" class="btn btn-ghost" type="button">重置，開新案例</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- #/result 結果頁 -->
+    <section id="page-result" data-page="result" hidden>
+      <div id="result-card" class="card">
+        <h2 class="result-title">你的最終有價值產品(VFP)與副產品清單</h2>
+        <p class="hint result-hint">副產品由源頭排到終點。可以直接修改文字、調整順序、刪除或新增，改完按「儲存」。</p>
+        <table class="result-table">
+          <thead>
+            <tr class="vfp-row">
+              <th scope="row" class="vfp-label"><span class="vfp-label-inner"><svg class="vfp-star" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 2l2.9 6.6 7.1.7-5.3 4.8 1.5 7-6.2-3.6-6.2 3.6 1.5-7L2 9.3l7.1-.7z" fill="#0C3467"/></svg>VFP</span></th>
+              <td colspan="2"><textarea id="vfp" rows="1" aria-label="VFP"></textarea></td>
+            </tr>
+            <tr class="head-row">
+              <th class="col-name">副產品</th>
+              <th class="col-desc">說明</th>
+              <th class="col-act"><span class="sr-only">操作</span></th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div class="result-actions">
+          <div class="actions-left">
+            <button id="add-btn" class="btn btn-ghost" type="button">＋ 新增副產品</button>
+            <button id="save-btn" class="btn" type="button">儲存</button>
+          </div>
+          <div class="menu-wrap">
+            <button id="export-btn" class="btn btn-ghost" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="export-menu">匯出 ▾</button>
+            <ul id="export-menu" class="menu" role="menu" hidden>
+              <li role="none"><button type="button" role="menuitem" data-export="xlsx">Excel（.xlsx）</button></li>
+              <li role="none"><button type="button" role="menuitem" data-export="jpg">圖片（.jpg）</button></li>
+            </ul>
           </div>
         </div>
-
-        <div class="field">
-          <label for="product">你覺得自己／團隊／公司在賣什麼產品？</label>
-          <textarea id="product" rows="2" placeholder="實體物品或無實體的服務都可以（可空白）"></textarea>
+        <p id="save-msg" class="save-msg" role="status"></p>
+        <div class="result-nav">
+          <button id="back-btn" class="btn btn-ghost" type="button">← 回到上一頁</button>
+          <button id="home-btn" class="btn btn-ghost" type="button">回首頁</button>
         </div>
-        <div class="field">
-          <label for="sales">賣的如何？</label>
-          <textarea id="sales" rows="2" placeholder="不一定要有數據，至少說好或壞的程度（可空白）"></textarea>
-        </div>
-        <div class="field">
-          <label for="score">為自己的營運打個分數（1～10 分）</label>
-          <input id="score" type="number" min="1" max="10" inputmode="numeric" placeholder="可空白">
-        </div>
-        <div class="field">
-          <label for="reason">為何給這個分數？</label>
-          <textarea id="reason" rows="2" placeholder="可空白"></textarea>
-        </div>
-
-        <button id="start-btn" class="btn" type="submit">開始</button>
-      </form>
-    </section>
-
-    <!-- 2. 對話 -->
-    <section id="chat-card" class="card" hidden>
-      <div id="chat" class="chat" aria-live="polite"></div>
-      <div id="loading" class="loading" hidden>教練思考中<span class="dots"><i></i><i></i><i></i></span></div>
-      <form id="answer-form" class="answer-form">
-        <label for="answer" class="sr-only">你的回答</label>
-        <textarea id="answer" rows="3" placeholder="輸入你的回答"></textarea>
-        <button id="answer-btn" class="btn" type="submit">送出回答</button>
-      </form>
-    </section>
-
-    <!-- 3. 結果 -->
-    <section id="result-card" class="card" hidden>
-      <h2>你的最終有價值產品與副產品</h2>
-      <p class="hint">副產品由源頭排到終點。可以直接修改文字、調整順序、刪除或新增，改完按「儲存」。</p>
-      <table class="result-table">
-        <thead>
-          <tr class="vfp-row">
-            <th scope="row" class="vfp-label">VFP</th>
-            <td colspan="2"><textarea id="vfp" rows="2" aria-label="VFP"></textarea></td>
-          </tr>
-          <tr class="head-row">
-            <th class="col-name">副產品</th>
-            <th class="col-desc">說明</th>
-            <th class="col-act"><span class="sr-only">操作</span></th>
-          </tr>
-        </thead>
-        <tbody id="rows"></tbody>
-      </table>
-      <div class="result-actions">
-        <button id="add-btn" class="btn btn-ghost" type="button">＋ 新增副產品</button>
-        <button id="save-btn" class="btn" type="button">儲存</button>
-        <span id="save-msg" class="save-msg" role="status"></span>
       </div>
     </section>
   </main>
+  <script src="/static/export-image.js"></script>
+  <script src="/static/intake.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from coach.flow import CoachService, FlowError
+from coach.export import XLSX_TYPE, build_xlsx, content_disposition
+from coach.flow import CoachService, FlowError, WrongState, current_result
 from coach.llm import get_llm
 from coach.store import JsonFileStore, SessionNotFound
 
@@ -111,6 +113,19 @@ def create_app(service: CoachService | None = None) -> FastAPI:
     @app.get("/sessions/{session_id}", summary="完整紀錄；vfp 之後 result.original 是模型原始版、result.edited 是主管修改版")
     def get_session(session_id: str):
         return svc.get(session_id)
+
+    @app.get("/sessions/{session_id}/export.xlsx", summary="匯出 Excel（.xlsx）；內容以主管修改版為準，沒改過就是模型原始版。非 vfp 狀態回 409")
+    def export_xlsx(session_id: str):
+        s = svc.get(session_id)
+        if s["status"] != "vfp":
+            raise WrongState(f"目前狀態是 {s['status']}，還沒有可匯出的結果")
+        cur = current_result(s)
+        today = date.today()
+        return Response(
+            content=build_xlsx(cur["vfp"], cur["byproducts"], today, s["inputs"]),
+            media_type=XLSX_TYPE,
+            headers={"Content-Disposition": content_disposition(today)},
+        )
 
     @app.get("/", include_in_schema=False)
     def index():
