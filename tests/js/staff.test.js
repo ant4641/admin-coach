@@ -96,6 +96,9 @@ test("mergeStaff：重複、過長、超過上限、摘要", () => {
 test("staffLabel／templateCsv", () => {
   assert.equal(Staff.staffLabel({ name: "王", role: "店長" }), "王（店長）");
   assert.equal(Staff.staffLabel({ name: "王", role: " " }), "王");
+  assert.deepEqual(Staff.staffParts({ name: " 王 ", role: " 店長 " }), { name: "王", role: "店長" });
+  assert.deepEqual(Staff.staffParts({ name: "王" }), { name: "王", role: "" });
+  assert.deepEqual(Staff.staffParts(null), { name: "", role: "" });
   const t = Staff.templateCsv();
   assert.ok(t.startsWith("\uFEFF姓名,職稱\r\n"));
   assert.equal(Staff.parseStaffCsv(t).length, 2);

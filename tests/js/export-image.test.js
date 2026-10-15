@@ -43,11 +43,11 @@ test("匯出資料整理：新格式、舊格式、缺值都不含 undefined／n
       null,
     ],
   });
-  assert.deepEqual(out.byproducts[0], { task: "備料", detail: "先備好", product: "食材", owner: "（未指派）" });
-  assert.deepEqual(out.byproducts[1], { task: "烘烤", detail: "預熱烤箱", product: "（未填）", owner: "（未指派）" });
-  assert.deepEqual(out.byproducts[2], { task: "交付", detail: "", product: "（未填）", owner: "（未指派）" });
-  assert.deepEqual(out.byproducts[3], { task: "（未填）", detail: "", product: "（未填）", owner: "（未指派）" });
-  assert.deepEqual(out.byproducts[4], { task: "（未填）", detail: "", product: "5", owner: "（未指派）" });
+  assert.deepEqual(out.byproducts[0], { task: "備料", detail: "先備好", product: "食材", owner: "（未指派）", ownerRole: "" });
+  assert.deepEqual(out.byproducts[1], { task: "烘烤", detail: "預熱烤箱", product: "（未填）", owner: "（未指派）", ownerRole: "" });
+  assert.deepEqual(out.byproducts[2], { task: "交付", detail: "", product: "（未填）", owner: "（未指派）", ownerRole: "" });
+  assert.deepEqual(out.byproducts[3], { task: "（未填）", detail: "", product: "（未填）", owner: "（未指派）", ownerRole: "" });
+  assert.deepEqual(out.byproducts[4], { task: "（未填）", detail: "", product: "5", owner: "（未指派）", ownerRole: "" });
   assert.equal(out.vfp, "V");
   assert.ok(!/undefined|null/.test(fmt(out)));
   assert.equal(window.exportJpeg.prepare({}).vfp, "（未填）");
@@ -59,15 +59,25 @@ test("圖片表頭是序號／工作項目／副產品，且排版不含 undefin
   assert.ok(!/undefined|null/.test(fmt(L.rows)));
 });
 
-test("負責人欄：有指派顯示姓名（職稱），沒有或缺值顯示（未指派），排版含負責人且不含 undefined", () => {
+test("負責人欄：姓名一行、職稱另一行（小字）；沒職稱不留空行；沒指派顯示（未指派）；不含 undefined", () => {
   const out = window.exportJpeg.prepare({
     vfp: "V",
-    byproducts: [{ task: "a", detail: "", product: "p", owner: " 王小明（店長） " }, { task: "b", product: "q" }, { task: "c", product: "r", owner: null }, { name: "舊" }],
+    byproducts: [
+      { task: "a", detail: "", product: "p", owner: " 王小明 ", ownerRole: " 店長 " },
+      { task: "b", product: "q" },
+      { task: "c", product: "r", owner: null },
+      { task: "d", product: "s", owner: "李小華", ownerRole: "" },
+      { task: "e", product: "t", owner: "", ownerRole: "不該出現" },
+    ],
   });
-  assert.deepEqual(out.byproducts.map((b) => b.owner), ["王小明（店長）", "（未指派）", "（未指派）", "（未指派）"]);
+  assert.deepEqual(out.byproducts.map((b) => b.owner), ["王小明", "（未指派）", "（未指派）", "李小華", "（未指派）"]);
+  assert.deepEqual(out.byproducts.map((b) => b.ownerRole), ["店長", "", "", "", ""]);
   const L = window.exportJpeg.layout(ctx, out);
-  assert.deepEqual(L.rows[0].ownerLines, ["王小明（店長）"]);
+  assert.deepEqual(L.rows[0].ownerLines, ["王小明"]);
+  assert.deepEqual(L.rows[0].roleLines, ["店長"]);
+  assert.deepEqual(L.rows[3].roleLines, [], "沒有職稱不留空行");
+  assert.ok(L.rows[0].ownerH > L.rows[3].ownerH, "有職稱比較高");
   assert.ok(!/undefined|null/.test(JSON.stringify(L.rows)));
-  const long = window.exportJpeg.layout(ctx, window.exportJpeg.prepare({ vfp: "V", byproducts: [{ task: "a", product: "p", owner: "長".repeat(60) }] }));
-  assert.ok(long.rows[0].ownerLines.length > 1 && long.rows[0].h > L.rows[0].h, "負責人太長 → 換行、列高變高");
+  const long = window.exportJpeg.layout(ctx, window.exportJpeg.prepare({ vfp: "V", byproducts: [{ task: "a", product: "p", owner: "王", ownerRole: "長".repeat(60) }] }));
+  assert.ok(long.rows[0].roleLines.length > 1 && long.rows[0].h > L.rows[0].h, "職稱太長 → 換行、列高變高，不會被切掉");
 });

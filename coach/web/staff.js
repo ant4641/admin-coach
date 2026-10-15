@@ -150,11 +150,16 @@
     return role ? `${name}（${role}）` : name;
   }
 
+  // 表格顯示用：姓名與職稱分開（職稱沒填就是空字串）
+  function staffParts(p) {
+    return { name: str(p && p.name), role: str(p && p.role) };
+  }
+
   function templateCsv() {
     return "﻿姓名,職稱\r\n王小明,店長\r\n李小華,店員\r\n";
   }
 
-  const Staff = { MAX_STAFF, MAX_NAME, validateRows, validateStaff, parseNames, parseCsv, parseStaffCsv, decodeBytes, mergeStaff, importSummary, staffLabel, templateCsv };
+  const Staff = { MAX_STAFF, MAX_NAME, validateRows, validateStaff, parseNames, parseCsv, parseStaffCsv, decodeBytes, mergeStaff, importSummary, staffLabel, staffParts, templateCsv };
   if (typeof module !== "undefined" && module.exports) module.exports = Staff;
   else root.Staff = Staff;
 })(typeof window !== "undefined" ? window : globalThis);

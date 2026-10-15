@@ -28,6 +28,8 @@
   const COLS = { seq: 80, name: 340, owner: 190 }; // 序號欄、工作項目欄寬；副產品欄吃剩下的；負責人欄在最右
   const DETAIL_PX = 16;
   const DETAIL_LINE_H = 24;
+  const ROLE_PX = 16; // 負責人的職稱：比姓名小一級、灰藍色
+  const ROLE_LINE_H = 24;
   const CELL_PAD_X = 16;
   const CELL_PAD_Y = 12;
   const LINE_H = 30;
@@ -46,9 +48,9 @@
   function normalizeItem(it) {
     const o = it && typeof it === "object" ? it : {};
     if ("task" in o || "detail" in o || "product" in o) {
-      return { task: clean(o.task), detail: clean(o.detail), product: clean(o.product), owner: clean(o.owner) };
+      return { task: clean(o.task), detail: clean(o.detail), product: clean(o.product), owner: clean(o.owner), ownerRole: clean(o.ownerRole) };
     }
-    return { task: clean(o.name), detail: clean(o.description), product: "", owner: clean(o.owner) };
+    return { task: clean(o.name), detail: clean(o.description), product: "", owner: clean(o.owner), ownerRole: clean(o.ownerRole) };
   }
 
   // 匯出圖片用的資料：task、product 空白顯示「（未填）」，detail 空白就不畫小字
@@ -59,7 +61,7 @@
       vfp: clean(d.vfp) || BLANK,
       byproducts: (Array.isArray(d.byproducts) ? d.byproducts : []).map((it) => {
         const r = normalizeItem(it);
-        return { task: r.task || BLANK, detail: r.detail, product: r.product || BLANK, owner: r.owner || UNASSIGNED };
+        return { task: r.task || BLANK, detail: r.detail, product: r.product || BLANK, owner: r.owner || UNASSIGNED, ownerRole: r.owner ? r.ownerRole : "" };
       }),
     };
   }
@@ -124,10 +126,14 @@
       const detailLines = b.detail ? wrapText(ctx, b.detail, COLS.name - CELL_PAD_X * 2) : [];
       font(ctx, "400", BODY_PX);
       const productLines = wrapText(ctx, b.product, descW - CELL_PAD_X * 2);
+      font(ctx, "400", BODY_PX);
       const ownerLines = wrapText(ctx, b.owner, COLS.owner - CELL_PAD_X * 2);
+      font(ctx, "400", ROLE_PX);
+      const roleLines = b.ownerRole ? wrapText(ctx, b.ownerRole, COLS.owner - CELL_PAD_X * 2) : []; // 職稱另起一行、小字；沒有就不留空行
+      const ownerH = ownerLines.length * LINE_H + roleLines.length * ROLE_LINE_H;
       const taskH = taskLines.length * LINE_H + detailLines.length * DETAIL_LINE_H;
-      const h = Math.max(taskH, productLines.length * LINE_H, ownerLines.length * LINE_H, LINE_H) + CELL_PAD_Y * 2;
-      return { seq: String(i + 1), taskLines, detailLines, taskH, productLines, ownerLines, h };
+      const h = Math.max(taskH, productLines.length * LINE_H, ownerH, LINE_H) + CELL_PAD_Y * 2;
+      return { seq: String(i + 1), taskLines, detailLines, taskH, productLines, ownerLines, roleLines, ownerH, h };
     });
 
     const titleBlock = 130; // 標題 + 日期 + 與表格的間距
@@ -224,7 +230,12 @@
       drawLines(ctx, r.productLines, x0 + COLS.seq + COLS.name + CELL_PAD_X, y + (r.h - r.productLines.length * LINE_H) / 2, "left");
       ctx.fillStyle = C.navy900;
       font(ctx, "400", BODY_PX);
-      drawLines(ctx, r.ownerLines, x0 + COLS.seq + COLS.name + L.descW + COLS.owner / 2, y + (r.h - r.ownerLines.length * LINE_H) / 2, "center");
+      const ox = x0 + COLS.seq + COLS.name + L.descW + COLS.owner / 2;
+      const oy = y + (r.h - r.ownerH) / 2;
+      drawLines(ctx, r.ownerLines, ox, oy, "center");
+      ctx.fillStyle = C.gray600;
+      font(ctx, "400", ROLE_PX);
+      r.roleLines.forEach((ln, k) => ctx.fillText(ln, ox, oy + r.ownerLines.length * LINE_H + ROLE_LINE_H * k + ROLE_LINE_H / 2));
       y += r.h;
     });
 

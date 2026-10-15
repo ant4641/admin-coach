@@ -83,9 +83,9 @@ def _clean_row(b: dict) -> dict:
 
 
 def staff_label(p: dict) -> str:
-    """「姓名（職稱）」；沒有職稱就只有姓名。"""
+    """儲存格用的負責人：「姓名」換行「職稱」；沒有職稱就只有姓名（不留空行）。"""
     name, role = (p.get("name") or "").strip(), (p.get("role") or "").strip()
-    return f"{name}（{role}）" if role else name
+    return f"{name}\n{role}" if role else name
 
 
 def _by_assignee_sheet(wb, rows, staff, thin, box, center, left, head_fill, head_font, body_font) -> None:
@@ -107,7 +107,7 @@ def _by_assignee_sheet(wb, rows, staff, thin, box, center, left, head_fill, head
             for col, value, align in (("A", label if n == 0 else "", center), ("B", i, center), ("C", r["task"], left), ("D", r["product"], left)):
                 c = ws[f"{col}{row}"]
                 c.value, c.alignment, c.fill, c.font, c.border = value, align, fill, body_font, box
-            ws.row_dimensions[row].height = _height((r["task"], 28), (r["product"], 44))
+            ws.row_dimensions[row].height = _height((r["task"], 28), (r["product"], 44), (label if n == 0 else "", 24))
             row += 1
 
 

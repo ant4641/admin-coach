@@ -108,6 +108,7 @@ h2 { margin: 0; font-size: 1.2rem; font-weight: 700; color: var(--navy-900); }
   text-decoration: none;
 }
 .service p { margin: 0; font-size: 0.9rem; color: var(--gray-600); }
+.service .service-note { margin-top: 8px; font-size: 0.8rem; color: var(--gray-600); }
 .service.active { transition: transform 0.15s ease, box-shadow 0.15s ease; cursor: pointer; }
 .service.active:hover, .service.active:focus-visible { transform: translateY(-4px); box-shadow: 0 12px 28px rgba(12, 52, 103, 0.16); }
 /* 灰色卡片：底仍是高不透明度，不讓背景照片透出來；只降低內容的不透明度 */
@@ -229,6 +230,13 @@ td.seq { text-align: center; color: #2D4A6E; font-weight: 700; }
 .result-table select.assignee-select { width: 100%; max-width: 100%; font: inherit; font-size: 14px; padding: 6px 4px; border: 1px solid var(--sky-300); border-radius: 8px; background: var(--white); color: var(--slate-700); }
 .result-table select.is-disabled { background: var(--mist-100); color: var(--gray-600); cursor: pointer; }
 #rows td.assignee { text-align: center; }
+.assignee-wrap { position: relative; }
+.assignee-view { display: none; padding: 6px 4px; border: 1px solid var(--sky-300); border-radius: 8px; background: var(--white); text-align: center; line-height: 1.35; overflow-wrap: anywhere; }
+.assignee-wrap.has-owner .assignee-view { display: block; }
+.assignee-wrap.has-owner select.assignee-select { position: absolute; inset: 0; height: 100%; opacity: 0; cursor: pointer; }
+.assignee-wrap.has-owner:focus-within .assignee-view { outline: 2px solid var(--navy-800, #0F325E); outline-offset: 1px; }
+.assignee-view .a-name { font-size: 14px; color: var(--slate-700); }
+.assignee-view .a-role { font-size: 12px; color: var(--gray-600); }
 .col-assignee { text-align: center; }
 /* 儲存驗證：錯誤格子紅框＋格子下方紅色小字（#B3261E 在白底對比約 6:1）*/
 .form-errors { margin: 8px 0 0; padding: 8px 12px; border-radius: 8px; background: var(--error-bg); color: #8A1F1F; font-weight: 700; font-size: 14px; }

@@ -774,7 +774,9 @@ def test_export_xlsx_has_assignee_column_and_by_assignee_sheet(make):
     wb = read_xlsx(client.get(f"/sessions/{sid}/export.xlsx"))
     ws = wb["產品鑑定"]
     assert [c.value for c in ws[3]] == ["序號", "工作項目", "工作內容", "副產品", "負責人"]
-    assert [ws.cell(row=r, column=5).value for r in (4, 5, 6, 7)] == ["李小華", "（未指派）", "王小明（店長）", "李小華"]
+    assert [ws.cell(row=r, column=5).value for r in (4, 5, 6, 7)] == ["李小華", "（未指派）", "王小明\n店長", "李小華"]
+    assert all(ws.cell(row=r, column=5).alignment.wrap_text for r in (4, 5, 6, 7))
+    assert ws.row_dimensions[6].height > ws.row_dimensions[7].height - 1  # 兩行的列高夠用
     assert any(str(r) in (ws.merged_cells.ranges.__str__()) for r in ("A1:E1", "B2:E2"))
     assert "A1:E1" in {str(r) for r in ws.merged_cells.ranges} and "B2:E2" in {str(r) for r in ws.merged_cells.ranges}
     assert "由管到飛產生" in ws["A9"].value
@@ -782,7 +784,7 @@ def test_export_xlsx_has_assignee_column_and_by_assignee_sheet(make):
     assert [c.value for c in by[1]] == ["負責人", "序號", "工作項目", "副產品"]
     # 依名單順序：王小明、李小華，未指派最後
     rows = [[c.value for c in by[i]] for i in range(2, 6)]
-    assert [(r[0] or "", r[2]) for r in rows] == [("王小明（店長）", "t3"), ("李小華", "t1"), ("", "t4"), ("（未指派）", "t2")]
+    assert [(r[0] or "", r[2]) for r in rows] == [("王小明\n店長", "t3"), ("李小華", "t1"), ("", "t4"), ("（未指派）", "t2")]
 
 
 def test_result_page_has_assignee_column_and_staff_dialog_served_locally(make):

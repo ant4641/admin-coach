@@ -140,11 +140,28 @@ async function route() {
   });
   window.scrollTo(0, 0);
   if (next !== "result") revealNext = false;
+  if (next !== "chat") openFromHome = false;
+  if (next === "home") updateHomeNote();
   if (next === "chat") await enterChat(token);
   if (next === "result") await enterResult(token);
 }
 
 window.addEventListener("hashchange", route);
+
+// 首頁「產品鑑定」卡片：有進行中的案例就顯示提示（案例＝已有 session，或六題填到一半）
+function hasActiveCase() {
+  return Boolean(store.get(KEY_SESSION)) || Intake.hasProgress(loadIntake());
+}
+
+function updateHomeNote() {
+  $("service-note").hidden = !hasActiveCase();
+}
+
+// 從首頁點進「產品鑑定」：已有結果就直接顯示結果表格（enterChat 判斷）
+let openFromHome = false;
+$("service-appraisal").addEventListener("click", () => {
+  openFromHome = true;
+});
 
 function go(hash) {
   if (location.hash === hash) route();
@@ -631,6 +648,8 @@ function replaySession(s) {
 }
 
 async function enterChat(token) {
+  const direct = openFromHome;
+  openFromHome = false;
   clearChat();
   try {
     await ensureIndustries();
@@ -645,6 +664,10 @@ async function enterChat(token) {
       const s = await api("GET", `/sessions/${sid}`);
       if (token !== navToken) return;
       mode = "session";
+      if (direct && s.status === "vfp") {
+        go("#/result");
+        return;
+      }
       replaySession(s);
       return;
     } catch (e) {
@@ -802,6 +825,11 @@ function assigneeControl(index) {
   const sel = document.createElement("select");
   sel.className = "assignee-select";
   sel.setAttribute("aria-label", `第 ${index + 1} 項負責人`);
+  const wrap = document.createElement("div");
+  wrap.className = "assignee-wrap";
+  const view = document.createElement("div");
+  view.className = "assignee-view";
+  view.setAttribute("aria-hidden", "true");
   if (!result.staff.length) {
     sel.add(new Option("請先新增員工名單", ""));
     sel.classList.add("is-disabled");
@@ -818,14 +846,36 @@ function assigneeControl(index) {
     sel.add(new Option("未指派", ""));
     result.staff.forEach((p) => sel.add(new Option(staffName(p), p.id)));
     sel.value = staffById(row.assignee) ? row.assignee : "";
+    // 已指派時，表格上顯示「姓名／職稱」兩行；原生下拉疊在上面（透明）負責點選
+    wrap.prepend(view);
+    const refresh = () => {
+      const p = staffById(row.assignee);
+      view.replaceChildren();
+      wrap.classList.toggle("has-owner", Boolean(p));
+      if (!p) return;
+      const parts = Staff.staffParts(p);
+      const n = document.createElement("div");
+      n.className = "a-name";
+      n.textContent = parts.name || "（未命名）";
+      view.appendChild(n);
+      if (parts.role) {
+        const r = document.createElement("div");
+        r.className = "a-role";
+        r.textContent = parts.role;
+        view.appendChild(r);
+      }
+    };
+    refresh();
     sel.addEventListener("change", () => {
       row.assignee = sel.value || null;
+      refresh();
       markDirty();
       clearFieldError(row, "assignee", sel);
     });
   }
+  wrap.appendChild(sel);
   const frag = document.createDocumentFragment();
-  frag.appendChild(sel);
+  frag.appendChild(wrap);
   if (row.errors.assignee) frag.appendChild(markInvalid(sel, `err-${index}-assignee`, row.errors.assignee));
   return frag;
 }
@@ -1250,7 +1300,8 @@ function currentExportData() {
     vfp: $("vfp").value.trim(),
     byproducts: result.rows.map((r) => {
       const p = staffById(r.assignee);
-      return { ...trimRow(r), owner: p ? Staff.staffLabel(p) : "" };
+      const parts = p ? Staff.staffParts(p) : { name: "", role: "" };
+      return { ...trimRow(r), owner: parts.name, ownerRole: parts.role };
     }),
     industry: result.inputs.industry || "",
     name: result.inputs.name || "",
@@ -1305,10 +1356,10 @@ $("back-btn").addEventListener("click", () => {
   }
 });
 
+// 回首頁只導覽，不清資料；案例只在對話頁按「重置」才清除
 $("home-btn").addEventListener("click", () => {
   if (!confirmLeave()) return;
   result.saved = snapshot();
-  clearFlowStorage();
   go("#/");
 });
 

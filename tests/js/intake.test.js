@@ -286,3 +286,12 @@ test("產業題與分數題：先轉換再驗證，轉不出來照原提示", ()
   const s2 = answer(Intake.create(), "八");
   assert.equal(s2.values.name, "八");
 });
+
+test("回首頁再進入：存進 storage 的進度 restore 後還在（題目位置與已填答案）", () => {
+  const s = answer(Intake.create(), "林主管");
+  const back = Intake.restore(JSON.parse(JSON.stringify(s)));
+  assert.equal(Intake.hasProgress(back), true);
+  assert.equal(back.step, s.step);
+  assert.equal(back.values.name, "林主管");
+  assert.equal(Intake.hasProgress(Intake.restore(null)), false);
+});
