@@ -23,7 +23,9 @@ class LLMClient(Protocol):
     provider: str
     model: str
 
-    def complete(self, messages: list[dict[str, str]]) -> LLMResult: ...
+    def complete(
+        self, messages: list[dict[str, str]], max_tokens: int | None = None, timeout: float | None = None
+    ) -> LLMResult: ...
 
 
 def _require(name: str) -> str:
@@ -48,10 +50,17 @@ class _OpenAICompatible:
         self._client = client
         self.temperature = _temperature()
 
-    def complete(self, messages: list[dict[str, str]]) -> LLMResult:
+    def complete(
+        self, messages: list[dict[str, str]], max_tokens: int | None = None, timeout: float | None = None
+    ) -> LLMResult:
+        """max_tokens、timeout 只給 python -m coach.check 用（極小請求、短逾時）；正常流程不帶。"""
         kwargs: dict = {"model": self.model, "messages": messages, "response_format": {"type": "json_object"}}
         if self.temperature is not None:
             kwargs["temperature"] = self.temperature
+        if max_tokens is not None:
+            kwargs["max_completion_tokens"] = max_tokens
+        if timeout is not None:
+            kwargs["timeout"] = timeout
         start = time.perf_counter()
         resp = self._client.chat.completions.create(**kwargs)
         latency_ms = int((time.perf_counter() - start) * 1000)

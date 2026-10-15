@@ -26,10 +26,6 @@ class ScriptedLLM:
         return LLMResult(text=self.text, model=self.model, latency_ms=0)
 
 
-def reply(status: str) -> dict:
-    return {"status": status, "missing": [] if status == "plan" else ["x"], "message": f"scripted {status}"}
-
-
 class SequenceLLM:
     """依序回覆；回覆用完還被呼叫就丟錯（代表流程多打了一次模型，或少寫了測試劇本）。"""
 
@@ -48,9 +44,10 @@ class SequenceLLM:
         return LLMResult(text=self.queue.pop(0), model=self.model, latency_ms=0)
 
 
-def clarify(message: str, **extra) -> dict:
-    return {"status": "clarify", "missing": ["x"], "message": message, **extra}
+def clarify(question: str = "一個問題") -> dict:
+    return {"status": "clarify", "question": question}
 
 
-def plan(table: str, **extra) -> dict:
-    return {"status": "plan", "missing": [], "message": table, **extra}
+def vfp(text: str = "得到好結果的客人", byproducts: list[dict] | None = None) -> dict:
+    items = byproducts if byproducts is not None else [{"task": "備料", "detail": "先備好", "product": "p"}, {"task": "交付", "detail": "交給客人", "product": "p"}]
+    return {"status": "vfp", "vfp": text, "byproducts": items}

@@ -13,12 +13,12 @@ venv/
 .ruff_cache/
 
 # IDE / OS
-.vscode/
+.vscode/*
+!.vscode/tasks.json
 .idea/
 Thumbs.db
 .DS_Store
 
 # 執行輸出（含 sessions 對話紀錄，內有使用者資料）
 outputs/
-主管的教練：打造高效團隊.png
-簡報生成提示詞.md
+public/

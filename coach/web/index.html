@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>管到飛</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="page-home">
+  <!-- 首頁天空：有 assets/sky.jpg 就蓋在 CSS 天空上，沒有就只看 CSS 天空 -->
+  <div class="sky" aria-hidden="true">
+    <img class="sky-probe" src="/static/assets/sky.jpg" alt="" onload="this.parentNode.classList.add('has-photo')" onerror="this.remove()">
+    <span class="orb orb-1"></span><span class="orb orb-2"></span>
+    <span class="cloud c1"></span><span class="cloud c2"></span><span class="cloud c3"></span>
+  </div>
+
+  <main class="page">
+    <header class="brand">
+      <img class="logo" src="/static/assets/logo.png" alt="" onerror="this.remove()">
+      <div class="brand-text">
+        <h1>管到飛</h1>
+        <div class="accent-bar"></div>
+        <p class="subtitle">每週陪跑教練，一上任就帶大家起飛</p>
+      </div>
+      <img class="wings" src="/static/assets/wings.svg" alt="" aria-hidden="true">
+    </header>
+
+    <div id="error" class="error" role="alert" hidden></div>
+
+    <!-- #/ 首頁 -->
+    <section id="page-home" data-page="home">
+      <div class="services">
+        <div class="service disabled" aria-disabled="true">
+          <img class="service-icon" src="/static/assets/icons/hat.svg" alt="" width="96" height="96">
+          <h2>職位的帽子</h2>
+          <span class="tag">即將推出</span>
+        </div>
+        <a class="service active" href="#/chat" id="service-appraisal">
+          <img class="service-icon" src="/static/assets/icons/gold.svg" alt="" width="96" height="96">
+          <h2>產品鑑定</h2>
+          <p>找出你的最終有價值產品，並拆解副產品</p>
+          <p id="service-note" class="service-note" hidden>有進行中的案例<br>（要重來：進入後按頁面下方的「重置，開新案例」）</p>
+        </a>
+        <div class="service disabled" aria-disabled="true">
+          <img class="service-icon" src="/static/assets/icons/wand.svg" alt="" width="96" height="96">
+          <h2>行政管理等級表</h2>
+          <span class="tag">即將推出</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- #/chat 對話頁 -->
+    <section id="page-chat" data-page="chat" hidden>
+      <div class="card">
+        <div id="chat" class="chat" aria-live="polite"></div>
+        <div id="loading" class="loading" hidden><span id="loading-text">教練思考中…</span><span class="dots"><i></i><i></i><i></i></span></div>
+        <div id="chat-done" class="chat-done" hidden>
+          <p id="done-label" class="done-label">對話已完成</p>
+          <button id="to-result" class="btn" type="button">打開最終結果</button>
+        </div>
+        <form id="answer-form" class="answer-form">
+          <label for="answer" class="sr-only">你的回答</label>
+          <textarea id="answer" rows="2" placeholder="輸入你的回答"></textarea>
+          <p id="voice-hint" class="voice-hint"></p>
+          <p id="answer-hint" class="answer-hint" role="alert" hidden></p>
+          <div class="answer-buttons">
+            <button id="prev-btn" class="btn btn-ghost" type="button" hidden>← 上一題</button>
+            <button id="mic-btn" class="mic-btn" type="button" title="語音由瀏覽器的辨識服務處理" aria-label="語音輸入" aria-pressed="false" hidden>
+              <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4M8 22h8"/></svg>
+            </button>
+            <button id="answer-btn" class="btn" type="submit">送出</button>
+          </div>
+        </form>
+        <div class="chat-reset">
+          <button id="reset-btn" class="btn btn-ghost" type="button">重置，開新案例</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- #/result 結果頁 -->
+    <section id="page-result" data-page="result" hidden>
+      <div id="result-card" class="card">
+        <h2 class="result-title">你的最終有價值產品(VFP)與副產品清單</h2>
+        <p class="hint result-hint">副產品由源頭排到終點。可以直接修改文字、調整順序、刪除或新增，改完按「儲存」。</p>
+        <p id="form-errors" class="form-errors" role="alert" hidden></p>
+        <div class="table-scroll"><table class="result-table">
+          <colgroup><col class="c-seq"><col class="c-task"><col class="c-product"><col class="c-assignee"><col class="c-act"></colgroup>
+          <thead>
+            <tr class="vfp-row">
+              <th scope="row" class="vfp-label" colspan="2"><span class="vfp-label-inner"><svg class="vfp-star" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 2l2.9 6.6 7.1.7-5.3 4.8 1.5 7-6.2-3.6-6.2 3.6 1.5-7L2 9.3l7.1-.7z" fill="#0C3467"/></svg>VFP</span></th>
+              <td colspan="3" class="vfp-cell"><textarea id="vfp" rows="1" aria-label="VFP"></textarea></td>
+            </tr>
+            <tr class="head-row">
+              <th class="col-seq">序號</th>
+              <th class="col-name">工作項目</th>
+              <th class="col-desc">副產品</th>
+              <th class="col-assignee">負責人</th>
+              <th class="col-act"><span class="sr-only">操作</span></th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table></div>
+        <div class="result-actions">
+          <div class="actions-left">
+            <button id="add-btn" class="btn btn-ghost" type="button">＋ 新增副產品</button>
+            <button id="staff-btn" class="btn btn-ghost" type="button" aria-haspopup="dialog">員工名單（0 人）</button>
+            <button id="save-btn" class="btn" type="button">儲存</button>
+          </div>
+          <div class="menu-wrap">
+            <button id="export-btn" class="btn btn-ghost" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="export-menu">匯出 ▾</button>
+            <ul id="export-menu" class="menu" role="menu" hidden>
+              <li role="none"><button type="button" role="menuitem" data-export="xlsx">Excel（.xlsx）</button></li>
+              <li role="none"><button type="button" role="menuitem" data-export="jpg">圖片（.jpg）</button></li>
+            </ul>
+          </div>
+        </div>
+        <p id="save-msg" class="save-msg" role="status"></p>
+        <div class="result-nav">
+          <button id="back-btn" class="btn btn-ghost" type="button">← 回到上一頁</button>
+          <button id="home-btn" class="btn btn-ghost" type="button">回首頁</button>
+        </div>
+      </div>
+    </section>
+  </main>
+  <dialog id="staff-dialog" class="staff-dialog" aria-labelledby="staff-title">
+    <div class="staff-box">
+      <h3 id="staff-title">員工名單</h3>
+      <div class="staff-add">
+        <label for="staff-input" class="sr-only">新增員工姓名</label>
+        <input id="staff-input" type="text" autocomplete="off" placeholder="輸入姓名，按 Enter 新增（可貼上多人，用換行、逗號或頓號分隔）">
+        <button id="staff-add-btn" class="btn btn-ghost" type="button">新增</button>
+      </div>
+      <div class="staff-tools">
+        <button id="staff-import-btn" class="btn btn-ghost" type="button">匯入 CSV</button>
+        <input id="staff-file" type="file" accept=".csv,.txt,text/csv,text/plain" hidden>
+        <button id="staff-template-btn" class="btn btn-ghost" type="button">下載範本</button>
+      </div>
+      <p id="staff-msg" class="staff-msg" role="status"></p>
+      <ul id="staff-list" class="staff-list"></ul>
+      <div class="staff-foot">
+        <button id="staff-save-btn" class="btn" type="button">儲存名單</button>
+        <button id="staff-close-btn" class="btn btn-ghost" type="button">關閉</button>
+      </div>
+    </div>
+  </dialog>
+  <div id="app-version" class="app-version" aria-hidden="true"></div>
+  <script src="/static/export-image.js"></script>
+  <script src="/static/intake.js"></script>
+  <script src="/static/voice.js"></script>
+  <script src="/static/staff.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
