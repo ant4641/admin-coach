@@ -23,6 +23,27 @@
   const EMPTY_HINT = "這題需要回答喔";
   const SCORE_HINT = "分數請填 1～10 的整數喔";
 
+  const CN_DIGITS = { 零: 0, 〇: 0, 一: 1, 二: 2, 兩: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+
+  // 口語數字轉阿拉伯數字（一～二十、兩、十一～十九、「第八項」「8號」，去掉前後標點與空白）；轉不出來就原文回傳
+  function normalizeNumber(text) {
+    const raw = String(text === undefined || text === null ? "" : text);
+    const t = raw
+      .replace(/[\s\u3000]+/g, "")
+      .replace(/^(?:(?![-+－＋])[\p{P}\p{S}])+|[\p{P}\p{S}]+$/gu, "")
+      .replace(/^第/, "")
+      .replace(/(號碼|號|項|題|個|分)$/, "");
+    if (/^\d+$/.test(t)) return t;
+    if (t === "十") return "10";
+    if (t === "二十" || t === "廿") return "20";
+    let m = t.match(/^十([一二三四五六七八九])$/);
+    if (m) return String(10 + CN_DIGITS[m[1]]);
+    m = t.match(/^二十([一二三四五六七八九])$/);
+    if (m) return String(20 + CN_DIGITS[m[1]]);
+    if (/^[一二兩三四五六七八九]$/.test(t)) return String(CN_DIGITS[t]);
+    return raw;
+  }
+
   function create() {
     return { step: 0, values: {}, other: false, done: false };
   }
@@ -47,14 +68,16 @@
     if (!t) return { ok: false, hint: EMPTY_HINT }; // 六題（含「請填寫你的產業」）都必填
     if (state.other) return { ok: true, value: t };
     if (field.key === "industry") {
-      const n = /^\d+$/.test(t) ? Number(t) : 0;
+      const nt = normalizeNumber(t); // 轉換先做，驗證後做
+      const n = /^\d+$/.test(nt) ? Number(nt) : 0;
       if (n < 1 || n > ctx.industryCount) {
         return { ok: false, hint: `請輸入 1～${ctx.industryCount} 的編號，或直接點選清單項目。` };
       }
       return { ok: true, value: n };
     }
     if (field.key === "score") {
-      const n = /^\d+$/.test(t) ? Number(t) : 0;
+      const nt = normalizeNumber(t);
+      const n = /^\d+$/.test(nt) ? Number(nt) : 0;
       if (n < 1 || n > 10) return { ok: false, hint: SCORE_HINT };
       return { ok: true, value: n };
     }
@@ -129,7 +152,7 @@
     return Object.values(state.values).some((v) => v !== undefined && v !== null && v !== "");
   }
 
-  const Intake = { displayQuestion, FIELDS, EMPTY_HINT, SCORE_HINT, create, restore, validate, submit, canBack, back, prefill, hasProgress, currentKey };
+  const Intake = { normalizeNumber, displayQuestion, FIELDS, EMPTY_HINT, SCORE_HINT, create, restore, validate, submit, canBack, back, prefill, hasProgress, currentKey };
   if (typeof module !== "undefined" && module.exports) module.exports = Intake;
   else root.Intake = Intake;
 })(typeof window !== "undefined" ? window : globalThis);

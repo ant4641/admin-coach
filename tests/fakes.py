@@ -49,5 +49,5 @@ def clarify(question: str = "一個問題") -> dict:
 
 
 def vfp(text: str = "得到好結果的客人", byproducts: list[dict] | None = None) -> dict:
-    items = byproducts if byproducts is not None else [{"name": "備料", "description": "先備好"}, {"name": "交付", "description": "交給客人"}]
+    items = byproducts if byproducts is not None else [{"task": "備料", "detail": "先備好", "product": "p"}, {"task": "交付", "detail": "交給客人", "product": "p"}]
     return {"status": "vfp", "vfp": text, "byproducts": items}

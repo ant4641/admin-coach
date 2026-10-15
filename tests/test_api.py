@@ -1,5 +1,7 @@
 """API：用 tests/fakes.py 的替身，不需金鑰。只驗證流程與錯誤碼，不驗證規則效果。"""
 
+import json
+import re
 from pathlib import Path
 
 import pytest
@@ -13,7 +15,8 @@ from coach.store import JsonFileStore
 from tests.fakes import SequenceLLM, clarify, vfp
 
 BODY = {"name": "王主管", "industry": 9}
-ITEMS = [{"name": "a", "description": "b"}, {"name": "c", "description": "d"}]
+ITEMS = [{"task": "a", "detail": "b", "product": "p"}, {"task": "c", "detail": "d", "product": "p"}]
+ITEMS_OUT = [{**i, "assignee": None} for i in ITEMS]  # 讀取時會補上 assignee 預設值
 
 
 @pytest.fixture
@@ -78,7 +81,7 @@ def test_clarify_answer_vfp_flow(make):
     assert r.json()["status"] == "clarify" and r.json()["question"] == "Q2"
     r = client.post(f"/sessions/{sid}/answer", json={"answer": "A2"})
     body = r.json()
-    assert (body["status"], body["vfp"], body["byproducts"], body["edited"]) == ("vfp", "V", ITEMS, False)
+    assert (body["status"], body["vfp"], body["byproducts"], body["edited"]) == ("vfp", "V", ITEMS_OUT, False)
     assert body["rules"]["version"] == load_rules().version
     s = client.get(f"/sessions/{sid}").json()
     assert s["status"] == "vfp" and s["inputs"]["score"] == 6 and s["inputs"]["reason"] == "R"
@@ -123,13 +126,13 @@ def test_put_byproducts_is_409_unless_vfp(make):
 def test_put_overwrites_and_get_shows_original_and_edited(make):
     client, _ = make(vfp("原始", ITEMS))
     sid = client.post("/sessions", json=BODY).json()["session_id"]
-    new = [{"name": "x", "description": "y"}]
+    new = [{"task": "x", "detail": "y", "product": "p"}]
     r = client.put(f"/sessions/{sid}/byproducts", json={"vfp": "改過", "byproducts": new})
     assert r.status_code == 200
-    assert (r.json()["status"], r.json()["vfp"], r.json()["byproducts"], r.json()["edited"]) == ("vfp", "改過", new, True)
+    assert (r.json()["status"], r.json()["vfp"], r.json()["byproducts"], r.json()["edited"]) == ("vfp", "改過", [{**n, "assignee": None} for n in new], True)
     result = client.get(f"/sessions/{sid}").json()["result"]
-    assert result["original"] == {"vfp": "原始", "byproducts": ITEMS}
-    assert result["edited"]["vfp"] == "改過" and result["edited"]["byproducts"] == new
+    assert result["original"] == {"vfp": "原始", "byproducts": ITEMS_OUT}
+    assert result["edited"]["vfp"] == "改過" and result["edited"]["byproducts"] == [{**n, "assignee": None} for n in new]
     # 再改一次，原始版本仍在；之後 answer 仍是 409
     client.put(f"/sessions/{sid}/byproducts", json={"vfp": "又改", "byproducts": ITEMS})
     result = client.get(f"/sessions/{sid}").json()["result"]
@@ -142,8 +145,8 @@ def test_put_overwrites_and_get_shows_original_and_edited(make):
     [
         {"vfp": "", "byproducts": ITEMS},
         {"vfp": "V", "byproducts": []},
-        {"vfp": "V", "byproducts": [{"name": "a", "description": ""}]},
-        {"vfp": "V", "byproducts": [{"name": " ", "description": "b"}]},
+        {"vfp": "V", "byproducts": [{"task": "a", "detail": "b", "product": ""}]},
+        {"vfp": "V", "byproducts": [{"task": " ", "detail": "b", "product": "p"}]},
     ],
 )
 def test_put_validation(make, body):
@@ -157,8 +160,10 @@ def test_put_validation(make, body):
 def test_put_missing_fields(make):
     client, _ = make(vfp("V", ITEMS))
     sid = client.post("/sessions", json=BODY).json()["session_id"]
-    r = client.put(f"/sessions/{sid}/byproducts", json={"vfp": "V", "byproducts": [{"name": "a"}]})
-    assert r.status_code == 422 and r.json() == {"detail": "byproducts.0.description缺少"}
+    r = client.put(f"/sessions/{sid}/byproducts", json={"vfp": "V", "byproducts": [{"task": "a", "detail": "b"}, {"task": "c", "detail": "d", "product": " "}]})
+    assert r.status_code == 422 and r.json()["detail"] == "第 1 列的副產品不可為空"
+    r = client.put(f"/sessions/{sid}/byproducts", json={"vfp": "V", "byproducts": [{"task": "a", "product": "p"}, {"detail": "d", "product": "p"}]})
+    assert r.status_code == 422 and r.json()["detail"] == "第 2 列的工作項目不可為空"
 
 
 @pytest.mark.parametrize("bad", ["not json", '{"status":"vfp","vfp":"V"}', '{"status":"clarify"}'])
@@ -192,7 +197,7 @@ def test_docs_page_and_endpoints_listed(make):
     client, _ = make()
     assert client.get("/docs").status_code == 200
     paths = client.get("/openapi.json").json()["paths"]
-    assert set(paths) == {"/industries", "/sessions", "/sessions/{session_id}/answer", "/sessions/{session_id}/byproducts", "/sessions/{session_id}", "/sessions/{session_id}/export.xlsx"}
+    assert set(paths) == {"/industries", "/sessions", "/sessions/{session_id}/answer", "/sessions/{session_id}/byproducts", "/sessions/{session_id}/staff", "/sessions/{session_id}", "/sessions/{session_id}/export.xlsx"}
 
 
 # ---- 網頁 -----------------------------------------------------------------
@@ -285,7 +290,7 @@ def test_web_files_have_no_external_urls():
 def vfp_session(client, edited=False):
     sid = client.post("/sessions", json=BODY).json()["session_id"]
     if edited:
-        client.put(f"/sessions/{sid}/byproducts", json={"vfp": "改過的VFP", "byproducts": [{"name": "新甲", "description": "新說明甲"}, {"name": "新乙", "description": "新說明乙"}, {"name": "新丙", "description": "新說明丙"}]})
+        client.put(f"/sessions/{sid}/byproducts", json={"vfp": "改過的VFP", "byproducts": [{"task": "新甲", "detail": "新說明甲", "product": "p"}, {"task": "新乙", "detail": "新說明乙", "product": "p"}, {"task": "新丙", "detail": "新說明丙", "product": "p"}]})
     return sid
 
 
@@ -305,8 +310,8 @@ def test_export_xlsx_matches_model_version_when_not_edited(make):
     assert r.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     ws = read_xlsx(r)["產品鑑定"]
     assert (ws["A2"].value, ws["B2"].value) == ("VFP", "原始VFP")
-    assert [c.value for c in ws[3]] == ["序號", "副產品", "說明"]
-    assert [[c.value for c in ws[i]] for i in (4, 5)] == [[1, "a", "b"], [2, "c", "d"]]
+    assert [c.value for c in ws[3]] == ["序號", "工作項目", "工作內容", "副產品", "負責人"]
+    assert [[c.value for c in ws[i]] for i in (4, 5)] == [[1, "a", "b", "p", "（未指派）"], [2, "c", "d", "p", "（未指派）"]]
     assert "由管到飛產生，日期：" in ws["A7"].value
     assert ws["A3"].fill.fgColor.rgb.endswith("0F325E") and ws["A3"].font.color.rgb.endswith("FFFFFF")
     # VFP 列是金色、navy 粗體；表頭仍是 navy-800 底白字
@@ -358,7 +363,7 @@ def test_home_page_references_icons_as_img_files(make):
     for name in ("hat", "gold", "wand"):
         assert f'src="/static/assets/icons/{name}.svg"' in html
         assert client.get(f"/static/assets/icons/{name}.svg").status_code == 200
-    assert html.count("<svg") == 1  # 只有 VFP 標籤旁的小星形；三個服務圖示都是 <img> 檔案
+    assert html.count("<svg") == 2  # 只有 VFP 標籤旁的小星形；三個服務圖示都是 <img> 檔案
     assert "baton" not in html
 
 
@@ -438,7 +443,7 @@ def test_vfp_row_is_gold_in_css_without_white_text(make):
     css = client.get("/static/style.css").text
     for color in ("#F4C84D", "#E0A92B", "#FFF3C9", "#FBE08A", "#D9A21B"):
         assert color in css
-    assert "vfp-label { width: 28%; background: linear-gradient(135deg, #F4C84D, #E0A92B); color: var(--navy-900)" in css
+    assert "vfp-label { background: linear-gradient(135deg, #F4C84D, #E0A92B); color: var(--navy-900)" in css
 
 
 def test_export_menu_opens_upward_aligned_right_and_actions_are_space_between(make):
@@ -575,3 +580,231 @@ def test_questions_config_keeps_original_text_and_names_are_added_at_display_tim
     # 驗證提醒不加稱呼
     intake_js = client.get("/static/intake.js").text
     assert 'EMPTY_HINT = "這題需要回答喔"' in intake_js
+
+
+# ---- 舊格式（name / description）相容 ----------------------------------------------
+
+
+def test_legacy_session_is_converted_on_read_without_rewriting_file(make, tmp_path):
+    client, _ = make()
+    legacy = {
+        "id": "20250101-000000-abcdef",
+        "status": "vfp",
+        "pending": None,
+        "inputs": {"name": "王", "industry": "餐飲業"},
+        "exchanges": [],
+        "result": {
+            "created_at": "x", "rules_version": "v0", "rules_sha8": "00000000", "model": "m", "edited": None,
+            "original": {"vfp": "舊VFP", "byproducts": [{"name": "備料", "description": "先備好"}]},
+        },
+    }
+    d = tmp_path / "sessions"
+    d.mkdir()
+    path = d / f"{legacy['id']}.json"
+    path.write_text(json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
+    before = path.read_text(encoding="utf-8")
+    r = client.get(f"/sessions/{legacy['id']}")
+    assert r.status_code == 200
+    assert r.json()["result"]["original"]["byproducts"] == [{"task": "備料", "detail": "先備好", "product": "", "assignee": None}]
+    x = client.get(f"/sessions/{legacy['id']}/export.xlsx")
+    assert x.status_code == 200
+    ws = read_xlsx(x)["產品鑑定"]
+    assert [c.value for c in ws[4]] == [1, "備料", "先備好", None, "（未指派）"]
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_export_xlsx_product_column_wraps_and_aligns_top(make):
+    client, _ = make(vfp("V", [{"task": "t", "detail": "d", "product": "很長的副產品" * 10}]))
+    ws = read_xlsx(client.get(f"/sessions/{vfp_session(client)}/export.xlsx"))["產品鑑定"]
+    assert ws["D4"].alignment.wrap_text and ws["D4"].alignment.vertical == "top"
+    assert ws["D4"].value == "很長的副產品" * 10
+
+
+def test_result_table_layout_is_fixed_with_action_column_width(make):
+    client, _ = make()
+    css = client.get("/static/style.css").text
+    assert "table-layout: fixed" in css
+    assert "--col-action: 124px" in css and ".c-act { width: var(--col-action); }" in css
+    assert "--col-index: 56px" in css and "--col-assignee: 150px" in css
+    assert "flex-wrap: nowrap" in css
+    html = client.get("/").text
+    assert '<div class="table-scroll">' in html and '<col class="c-act">' in html
+
+
+def test_web_files_revalidate_and_index_has_version_params(make):
+    client, _ = make()
+    for path in ("/", "/static/app.js", "/static/style.css", "/static/export-image.js", "/static/index.html"):
+        r = client.get(path)
+        assert r.status_code == 200 and r.headers["cache-control"] == "no-cache", path
+    assert client.get("/static/app.js").headers.get("etag")
+    html = client.get("/").text
+    for name in ("style.css", "export-image.js", "intake.js", "app.js"):
+        assert re.search(rf'/static/{re.escape(name)}\?v=\d+"', html), name
+    icons = Path(__file__).resolve().parent.parent / "coach" / "web" / "assets" / "icons"
+    svg = next(icons.glob("*.svg"), None)
+    if svg:
+        assert client.get(f"/static/assets/icons/{svg.name}").headers.get("cache-control") != "no-cache"
+
+
+def test_export_xlsx_tolerates_legacy_and_missing_values():
+    from datetime import date
+
+    from coach.export import build_xlsx
+
+    wb = read_xlsx(type("R", (), {"content": build_xlsx("V", [{"name": "舊", "description": "d"}, {"task": "t", "detail": None, "product": None}, {}], date(2025, 1, 1))})())
+    ws = wb["產品鑑定"]
+    assert [c.value for c in ws[4]] == [1, "舊", "d", None, "（未指派）"]
+    assert [c.value for c in ws[5]] == [2, "t", None, None, "（未指派）"]
+    assert all("None" not in c.value and "undefined" not in c.value for r in ws.iter_rows() for c in r if isinstance(c.value, str))
+
+
+# ---- 員工名單與指派 ----------------------------------------------------------------
+
+
+def put_staff(client, sid, staff):
+    return client.put(f"/sessions/{sid}/staff", json={"staff": staff})
+
+
+def test_staff_requires_vfp_state_409(make):
+    client, _ = make(clarify("Q"))
+    sid = client.post("/sessions", json=BODY).json()["session_id"]
+    assert client.get(f"/sessions/{sid}/staff").status_code == 409
+    assert put_staff(client, sid, [{"name": "甲"}]).status_code == 409
+
+
+def test_staff_put_get_generates_ids_and_trims(make):
+    client, _ = make(vfp("V", ITEMS))
+    sid = vfp_session(client)
+    r = put_staff(client, sid, [{"name": " 王小明 ", "role": " 店長 "}, {"name": "李小華"}])
+    assert r.status_code == 200
+    staff = r.json()["staff"]
+    assert [(p["name"], p["role"]) for p in staff] == [("王小明", "店長"), ("李小華", "")]
+    assert all(p["id"] and len(p["id"]) <= 8 for p in staff) and staff[0]["id"] != staff[1]["id"]
+    assert client.get(f"/sessions/{sid}/staff").json() == {"staff": staff}
+    assert client.get(f"/sessions/{sid}").json()["staff"] == staff
+    # 改名後 id 不變
+    r2 = put_staff(client, sid, [{"id": staff[0]["id"], "name": "王大明", "role": ""}, staff[1]])
+    assert r2.json()["staff"][0]["id"] == staff[0]["id"] and r2.json()["staff"][0]["name"] == "王大明"
+
+
+@pytest.mark.parametrize(
+    "staff,errors",
+    [
+        ([{"name": "甲"}, {"name": "  "}], [{"row": 2, "field": "name", "message": "姓名不得為空"}]),
+        ([{"name": "甲"}, {"name": "甲 "}], [{"row": 2, "field": "name", "message": "這個姓名已經在名單中"}]),
+        ([{"name": "長" * 21}], [{"row": 1, "field": "name", "message": "姓名最多 20 字"}]),
+        ([{"name": f"人{i}"} for i in range(51)], [{"row": 51, "field": "name", "message": "員工最多 50 人"}]),
+    ],
+)
+def test_staff_validation_422_with_errors(make, staff, errors):
+    client, _ = make(vfp("V", ITEMS))
+    sid = vfp_session(client)
+    r = put_staff(client, sid, staff)
+    assert r.status_code == 422 and isinstance(r.json()["detail"], str)
+    assert r.json()["errors"] == errors
+    assert client.get(f"/sessions/{sid}").json()["staff"] == []  # 失敗不存
+
+
+def test_staff_limit_50_ok(make):
+    client, _ = make(vfp("V", ITEMS))
+    sid = vfp_session(client)
+    assert put_staff(client, sid, [{"name": f"人{i}"} for i in range(50)]).status_code == 200
+
+
+def test_assignee_must_exist_and_deleting_staff_unassigns(make):
+    client, _ = make(vfp("V", ITEMS))
+    sid = vfp_session(client)
+    a, b = put_staff(client, sid, [{"name": "甲"}, {"name": "乙"}]).json()["staff"]
+    items = [{"task": "t1", "detail": "", "product": "p1", "assignee": a["id"]}, {"task": "t2", "detail": "", "product": "p2", "assignee": b["id"]}]
+    r = client.put(f"/sessions/{sid}/byproducts", json={"vfp": "V", "byproducts": items})
+    assert r.status_code == 200 and [x["assignee"] for x in r.json()["byproducts"]] == [a["id"], b["id"]]
+    bad = [items[0], {**items[1], "assignee": "nope"}]
+    r = client.put(f"/sessions/{sid}/byproducts", json={"vfp": "V", "byproducts": bad})
+    assert r.status_code == 422
+    assert r.json()["errors"] == [{"row": 2, "field": "assignee", "message": "負責人不在員工名單中"}]
+    assert "第 2 列" in r.json()["detail"]
+    # 刪掉甲：原本指派給甲的項目改成未指派，乙的不受影響
+    put_staff(client, sid, [b])
+    cur = client.get(f"/sessions/{sid}").json()["result"]["edited"]["byproducts"]
+    assert [x["assignee"] for x in cur] == [None, b["id"]]
+
+
+def test_byproducts_422_errors_list_rows_and_fields(make):
+    client, _ = make(vfp("V", ITEMS))
+    sid = vfp_session(client)
+    body = {"vfp": "V", "byproducts": [{"task": "a", "product": "p"}, {"task": " ", "product": ""}, {"task": "c", "product": "p", "detail": ""}]}
+    r = client.put(f"/sessions/{sid}/byproducts", json=body)
+    assert r.status_code == 422
+    assert r.json()["errors"] == [
+        {"row": 2, "field": "task", "message": "工作項目不得為空"},
+        {"row": 2, "field": "product", "message": "副產品不得為空"},
+    ]
+    assert r.json()["detail"] == "第 2 列的工作項目不可為空"
+
+
+def test_legacy_session_without_staff_or_assignee_gets_defaults(make, tmp_path):
+    client, _ = make()
+    legacy = {
+        "id": "20250101-000001-abcdef", "status": "vfp", "pending": None, "inputs": {"name": "王", "industry": "餐飲業"}, "exchanges": [],
+        "result": {"created_at": "x", "rules_version": "v0", "rules_sha8": "00000000", "model": "m", "edited": None,
+                   "original": {"vfp": "V", "byproducts": [{"task": "t", "detail": "d", "product": "p"}]}},
+    }
+    d = tmp_path / "sessions"
+    d.mkdir()
+    path = d / f"{legacy['id']}.json"
+    path.write_text(json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
+    before = path.read_text(encoding="utf-8")
+    body = client.get(f"/sessions/{legacy['id']}").json()
+    assert body["staff"] == [] and body["result"]["original"]["byproducts"][0]["assignee"] is None
+    assert client.get(f"/sessions/{legacy['id']}/staff").json() == {"staff": []}
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_export_xlsx_has_assignee_column_and_by_assignee_sheet(make):
+    client, _ = make(vfp("V", ITEMS))
+    sid = vfp_session(client)
+    a, b = put_staff(client, sid, [{"name": "王小明", "role": "店長"}, {"name": "李小華"}]).json()["staff"]
+    items = [
+        {"task": "t1", "detail": "d1", "product": "p1", "assignee": b["id"]},
+        {"task": "t2", "detail": "", "product": "p2", "assignee": None},
+        {"task": "t3", "detail": "", "product": "p3", "assignee": a["id"]},
+        {"task": "t4", "detail": "", "product": "p4", "assignee": b["id"]},
+    ]
+    assert client.put(f"/sessions/{sid}/byproducts", json={"vfp": "V", "byproducts": items}).status_code == 200
+    wb = read_xlsx(client.get(f"/sessions/{sid}/export.xlsx"))
+    ws = wb["產品鑑定"]
+    assert [c.value for c in ws[3]] == ["序號", "工作項目", "工作內容", "副產品", "負責人"]
+    assert [ws.cell(row=r, column=5).value for r in (4, 5, 6, 7)] == ["李小華", "（未指派）", "王小明（店長）", "李小華"]
+    assert any(str(r) in (ws.merged_cells.ranges.__str__()) for r in ("A1:E1", "B2:E2"))
+    assert "A1:E1" in {str(r) for r in ws.merged_cells.ranges} and "B2:E2" in {str(r) for r in ws.merged_cells.ranges}
+    assert "由管到飛產生" in ws["A9"].value
+    by = wb["依負責人"]
+    assert [c.value for c in by[1]] == ["負責人", "序號", "工作項目", "副產品"]
+    # 依名單順序：王小明、李小華，未指派最後
+    rows = [[c.value for c in by[i]] for i in range(2, 6)]
+    assert [(r[0] or "", r[2]) for r in rows] == [("王小明（店長）", "t3"), ("李小華", "t1"), ("", "t4"), ("（未指派）", "t2")]
+
+
+def test_result_page_has_assignee_column_and_staff_dialog_served_locally(make):
+    client, _ = make()
+    html = client.get("/").text
+    assert '<col class="c-assignee">' in html and "負責人" in html
+    assert 'id="staff-dialog"' in html and 'id="form-errors"' in html and "員工名單（0 人）" in html
+    assert re.search(r'/static/staff\.js\?v=\d+"', html)
+    assert client.get("/static/staff.js").status_code == 200
+    assert "http://" not in html.replace("http://www.w3.org", "") and "https://" not in html
+    css = client.get("/static/style.css").text
+    assert ".c-assignee { width: var(--col-assignee); }" in css and ".field-error" in css and "#B3261E" in css
+
+
+def test_voice_input_has_mic_button_and_no_external_urls(make):
+    client, _ = make()
+    html = client.get("/").text
+    assert 'id="mic-btn"' in html and 'aria-label="語音輸入"' in html and "語音由瀏覽器的辨識服務處理" in html
+    assert re.search(r'/static/voice\.js\?v=\d+"', html)
+    for name in ("voice.js", "app.js", "intake.js"):
+        js = client.get(f"/static/{name}").text
+        assert not re.search(r"https?://", js), name
+    app_js = client.get("/static/app.js").text
+    for needle in ('"zh-TW"', "interimResults = true", "continuous = false", "maxAlternatives = 1"):
+        assert needle in app_js

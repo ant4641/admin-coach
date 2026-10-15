@@ -24,23 +24,32 @@ def _wrap(text: str, limit: int) -> list[str]:
     return lines
 
 
-def render_table(vfp: str, byproducts: list[dict], max_name: int = 24, max_desc: int = 48) -> str:
-    name_w = max([width("副產品"), *(min(width(b["name"]), max_name) for b in byproducts)])
-    desc_w = max([width("說明"), min(width(vfp), max_desc), *(min(width(b["description"]), max_desc) for b in byproducts)])
+def _task_cell(b: dict) -> str:
+    return f"{b['task']}\n{b['detail']}" if b.get("detail") else b["task"]
+
+
+def _cell_width(text: str, limit: int) -> int:
+    return max(min(width(line), limit) for line in text.splitlines() or [""])
+
+
+def render_table(vfp: str, byproducts: list[dict], max_task: int = 44, max_product: int = 36) -> str:
+    """兩欄：工作項目（task，下一行接 detail）、副產品（product）；VFP 列放在最上面。"""
+    left_w = max([width("工作項目"), width("VFP"), *(_cell_width(_task_cell(b), max_task) for b in byproducts)])
+    right_w = max([width("副產品"), min(width(vfp), max_product), *(_cell_width(b["product"], max_product) for b in byproducts)])
 
     def line(fill: str) -> str:
-        return f"+{fill * (name_w + 2)}+{fill * (desc_w + 2)}+"
+        return f"+{fill * (left_w + 2)}+{fill * (right_w + 2)}+"
 
     def row(left: str, right: str) -> list[str]:
-        a, b = _wrap(left, name_w), _wrap(right, desc_w)
+        a, b = _wrap(left, left_w), _wrap(right, right_w)
         out = []
         for i in range(max(len(a), len(b))):
             x = a[i] if i < len(a) else ""
             y = b[i] if i < len(b) else ""
-            out.append(f"| {x}{' ' * (name_w - width(x))} | {y}{' ' * (desc_w - width(y))} |")
+            out.append(f"| {x}{' ' * (left_w - width(x))} | {y}{' ' * (right_w - width(y))} |")
         return out
 
-    lines = [line("-"), *row("VFP", vfp), line("-"), *row("副產品", "說明"), line("=")]
+    lines = [line("-"), *row("VFP", vfp), line("-"), *row("工作項目", "副產品"), line("=")]
     for b in byproducts:
-        lines += [*row(b["name"], b["description"]), line("-")]
+        lines += [*row(_task_cell(b), b["product"]), line("-")]
     return "\n".join(lines)

@@ -59,7 +59,7 @@ test("答案前後空白會被去掉", () => {
 
 test("產業編號必須是 1～20 的整數", () => {
   const s = answer(Intake.create(), "林主管");
-  for (const bad of ["0", "21", "9.5", "abc", "-1", "九"]) {
+  for (const bad of ["0", "21", "9.5", "abc", "-1", "二十一"]) {
     const r = Intake.submit(s, bad, ctx);
     assert.equal(r.ok, false, `「${bad}」不該通過`);
     assert.match(r.hint, /1～20/);
@@ -69,7 +69,7 @@ test("產業編號必須是 1～20 的整數", () => {
 test("分數不合法時不可前進", () => {
   const s = upToSales();
   assert.equal(Intake.currentKey(s), "score");
-  for (const bad of ["0", "11", "5.5", "abc", "-3", "", "十"]) {
+  for (const bad of ["0", "11", "5.5", "abc", "-3", "", "十一"]) {
     const r = Intake.submit(s, bad, ctx);
     assert.equal(r.ok, false, `「${bad}」不該通過`);
   }
@@ -261,4 +261,28 @@ test("改了稱呼之後，後面的題目用新稱呼", () => {
   s = answer(s, "  林主管 ");
   assert.equal(s.values.name, "林主管");
   assert.equal(Intake.displayQuestion(s.step, "你在哪個產業？", s.values.name), "林主管，你在哪個產業？");
+});
+
+test("normalizeNumber：口語數字、標點、第N項、N號", () => {
+  const cases = { 八: "8", "八。": "8", 第十二項: "12", 兩: "2", 二十: "20", "8號": "8", 十: "10", 十九: "19", "第 八 項！": "8", "7": "7" };
+  for (const [input, want] of Object.entries(cases)) assert.equal(Intake.normalizeNumber(input), want, input);
+  for (const input of ["不是數字", "abc", "1.5", "-1", ""]) assert.equal(Intake.normalizeNumber(input), input);
+});
+
+test("產業題與分數題：先轉換再驗證，轉不出來照原提示", () => {
+  const s1 = answer(Intake.create(), "小林");
+  const ok = Intake.submit(s1, "第八項。", ctx);
+  assert.equal(ok.ok, true);
+  assert.equal(ok.state.values.industry, 8);
+  const bad = Intake.submit(s1, "不是數字", ctx);
+  assert.equal(bad.ok, false);
+  assert.match(bad.hint, /1～20/);
+  const s5 = answer(Intake.create(), "小林", "3", "麵包", "還可以");
+  assert.equal(Intake.submit(s5, "七分。", ctx).state.values.score, 7);
+  assert.equal(Intake.submit(s5, "兩", ctx).state.values.score, 2);
+  assert.equal(Intake.submit(s5, "十一", ctx).hint, Intake.SCORE_HINT);
+  assert.equal(Intake.submit(s5, "不是數字", ctx).hint, Intake.SCORE_HINT);
+  // 其他題與「其他」自填不轉換
+  const s2 = answer(Intake.create(), "八");
+  assert.equal(s2.values.name, "八");
 });

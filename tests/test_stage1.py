@@ -125,14 +125,14 @@ def test_answered_exchanges_are_replayed_and_unanswered_one_is_not():
 
 # ---- 解析 -----------------------------------------------------------------
 
-GOOD_VFP = {"status": "vfp", "vfp": "V", "byproducts": [{"name": "a", "description": "b"}]}
+GOOD_VFP = {"status": "vfp", "vfp": "V", "byproducts": [{"task": "a", "detail": "b", "product": "p"}]}
 
 
 def test_parse_clarify_and_vfp():
     c = parse_reply('{"status":"clarify","question":" Q? "}')
     assert (c.status, c.question) == ("clarify", "Q?")
     v = parse_reply("```json\n" + json.dumps(GOOD_VFP) + "\n```")
-    assert (v.status, v.vfp, v.byproducts) == ("vfp", "V", [{"name": "a", "description": "b"}])
+    assert (v.status, v.vfp, v.byproducts) == ("vfp", "V", [{"task": "a", "detail": "b", "product": "p"}])
 
 
 @pytest.mark.parametrize(
@@ -143,11 +143,11 @@ def test_parse_clarify_and_vfp():
         '{"status":"plan","message":"x"}',
         '{"status":"clarify"}',
         '{"status":"clarify","question":"  "}',
-        '{"status":"vfp","vfp":"","byproducts":[{"name":"a","description":"b"}]}',
+        '{"status":"vfp","vfp":"","byproducts":[{"task":"a","detail":"b","product":"p"}]}',
         '{"status":"vfp","vfp":"V"}',
         '{"status":"vfp","vfp":"V","byproducts":[]}',
         '{"status":"vfp","vfp":"V","byproducts":[{"name":"a"}]}',
-        '{"status":"vfp","vfp":"V","byproducts":[{"name":"","description":"b"}]}',
+        '{"status":"vfp","vfp":"V","byproducts":[{"task":"","detail":"b","product":"p"}]}',
         '{"status":"vfp","vfp":"V","byproducts":["a"]}',
     ],
 )
@@ -231,12 +231,37 @@ def test_parse_answers():
 
 
 def test_table_lines_have_equal_display_width():
-    t = render_table("吃到好吃且想再來的客人", [{"name": "購買食材", "description": "麵條、豬骨、配料"}, {"name": "A", "description": "x" * 120}])
+    t = render_table("吃到好吃且想再來的客人", [{"task": "購買食材", "detail": "麵條、豬骨、配料", "product": "p"}, {"task": "A", "detail": "x" * 120, "product": "p"}])
     widths = {width(line) for line in t.splitlines()}
     assert len(widths) == 1
     lines = t.splitlines()
     assert "VFP" in lines[1] and "吃到好吃且想再來的客人" in lines[1]
-    assert "副產品" in lines[3] and "說明" in lines[3]
+    assert "工作項目" in lines[3] and "副產品" in lines[3]
     assert lines[4].startswith("+=")
     # 副產品由上到下維持輸入順序
     assert t.index("購買食材") < t.index("| A ")
+
+
+# ---- byproducts 三欄格式（task / detail / product）------------------------------
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"detail": "b", "product": "p"},
+        {"task": "a", "product": "p"},
+        {"task": "a", "detail": "b"},
+        {"task": "a", "detail": "b", "product": " "},
+        {"task": "a", "detail": "", "product": "p"},
+        {"task": "a", "detail": "b", "product": 3},
+        {"name": "a", "description": "b"},
+    ],
+)
+def test_vfp_reply_needs_three_nonempty_string_fields(item):
+    raw = json.dumps({"status": "vfp", "vfp": "V", "byproducts": [{"task": "x", "detail": "y", "product": "z"}, item]}, ensure_ascii=False)
+    assert parse_reply(raw).status == "unknown"
+
+
+def test_vfp_reply_new_format_ok():
+    raw = '{"status":"vfp","vfp":"V","byproducts":[{"task":" 備料 ","detail":"d","product":"p"}]}'
+    assert parse_reply(raw).byproducts == [{"task": "備料", "detail": "d", "product": "p"}]

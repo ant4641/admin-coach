@@ -2,6 +2,21 @@
 
 const $ = (id) => document.getElementById(id);
 
+// 頁尾版本字樣：取自載入這支 app.js 時的 ?v=（後端依檔案修改時間帶入），方便確認瀏覽器載入的是不是最新程式
+(function showVersion() {
+  try {
+    const v = Number(new URL(document.currentScript.src).searchParams.get("v"));
+    const el = document.getElementById("app-version");
+    if (el && v) {
+      const d = new Date(v * 1000);
+      const p = (n) => String(n).padStart(2, "0");
+      el.textContent = `v${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+    }
+  } catch {
+    /* 沒有版本參數就不顯示 */
+  }
+})();
+
 // ---- sessionStorage（讀寫都包 try，私密視窗等情況不能讓頁面壞掉）----------------
 
 const KEY_SESSION = "coach_session";
@@ -54,7 +69,11 @@ async function request(method, path, body) {
   if (res.status === 502) throw apiError("教練的回覆格式有誤，請再按一次送出", 502);
   if (res.status === 503) throw apiError("目前無法連線到模型，請稍後再試", 503);
   if (res.status === 429) throw apiError("目前使用的人比較多，請稍後再試", 429);
-  if (data && typeof data.detail === "string") throw apiError(data.detail, res.status);
+  if (data && typeof data.detail === "string") {
+    const err = apiError(data.detail, res.status);
+    if (Array.isArray(data.errors)) err.errors = data.errors;
+    throw err;
+  }
   throw apiError(`請求失敗（${res.status}）`, res.status);
 }
 
@@ -98,6 +117,7 @@ let navToken = 0; // 每次換頁加一；非同步動作回來時用來判斷�
 const LEAVE_MESSAGE = "你有尚未儲存的修改，確定要離開嗎？";
 
 async function route() {
+  stopVoice(true);
   const hash = location.hash;
   if (!PAGES[hash]) {
     location.replace("#/");
@@ -161,12 +181,15 @@ function setLoading(text) {
 let finishing = false; // 收到 vfp 後的「教練整理中…」期間，不讓 setBusy 把載入提示關掉
 
 function setBusy(busy) {
+  if (busy) stopVoice(true);
+  $("mic-btn").disabled = busy;
   $("answer-btn").disabled = busy;
   $("prev-btn").disabled = busy; // 送出途中不能回頭
   if (!finishing) setLoading(busy ? "教練思考中…" : null);
 }
 
 function clearChat() {
+  stopVoice(true);
   chat.replaceChildren();
   setLoading(null);
   $("chat-done").hidden = true;
@@ -184,8 +207,91 @@ function showForm({ placeholder }) {
   $("answer-form").hidden = false;
   $("answer").placeholder = placeholder;
   setAnswerHint("");
+  stopVoice(true);
+  updateVoiceHint();
   $("answer").focus({ preventScroll: true });
 }
+
+// ---- 語音輸入（瀏覽器內建的 SpeechRecognition；純函式在 voice.js）--------------------
+
+const SpeechCtor = Voice.recognitionCtor(window);
+let recog = null; // 目前進行中的辨識；null＝待命
+
+function updateVoiceHint() {
+  const coarse = Boolean(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+  $("voice-hint").textContent = Voice.hintText(Boolean(SpeechCtor), coarse);
+}
+
+function setListeningUi(on) {
+  const btn = $("mic-btn");
+  btn.classList.toggle("listening", on);
+  btn.setAttribute("aria-pressed", on ? "true" : "false");
+  $("voice-hint").textContent = on ? "聆聽中，請說話…再按一次停止" : "";
+  if (!on) updateVoiceHint();
+}
+
+// discard＝true：直接放棄（切題、送出、離開頁面）；false：使用者再按一次，讓辨識把已聽到的收尾
+function stopVoice(discard) {
+  if (!recog) return;
+  const r = recog;
+  if (discard) {
+    recog = null;
+    setListeningUi(false);
+    try {
+      r.abort();
+    } catch {
+      /* 忽略 */
+    }
+  } else {
+    try {
+      r.stop();
+    } catch {
+      /* 忽略 */
+    }
+  }
+}
+
+function startVoice() {
+  if (!SpeechCtor || recog || $("mic-btn").disabled) return;
+  const box = $("answer");
+  const base = box.value; // 按下當下已有的文字，辨識結果接在它後面
+  const r = new SpeechCtor();
+  r.lang = "zh-TW";
+  r.interimResults = true;
+  r.continuous = false;
+  r.maxAlternatives = 1;
+  r.onresult = (ev) => {
+    if (recog !== r) return;
+    const { finalText, interimText } = Voice.splitResults(ev.results); // 每次都由整段重算，暫時結果被覆蓋、不會累加
+    box.value = Voice.mergeTranscript(base, finalText, interimText);
+    setAnswerHint("");
+  };
+  r.onerror = (ev) => {
+    if (recog !== r) return;
+    if (ev.error !== "aborted") setAnswerHint(Voice.errorMessage(ev.error));
+  };
+  r.onend = () => {
+    if (recog !== r) return;
+    recog = null;
+    setListeningUi(false);
+    box.focus({ preventScroll: true });
+  };
+  recog = r;
+  setListeningUi(true);
+  try {
+    r.start();
+  } catch {
+    recog = null;
+    setListeningUi(false);
+    setAnswerHint(Voice.errorMessage(""));
+  }
+}
+
+if (SpeechCtor) {
+  $("mic-btn").hidden = false;
+  $("mic-btn").addEventListener("click", () => (recog ? stopVoice(false) : startVoice()));
+}
+window.addEventListener("pagehide", () => stopVoice(true));
 
 // ---- 前端寫死的六題（文字與規則檔第 2 章一致）-------------------------------
 
@@ -314,6 +420,7 @@ function updatePrevButton() {
 
 // 問目前這一題（六題或「其他」的追問），輸入框預填先前的回答
 function askCurrent() {
+  stopVoice(true);
   if (intake.other) {
     addBubble("coach", askText(1, OTHER_PROMPT, intake.values.name));
     showForm({ placeholder: "請填寫你的產業" });
@@ -411,6 +518,7 @@ async function submitIntake(text) {
 
 $("prev-btn").addEventListener("click", () => {
   if ($("prev-btn").disabled || mode !== "intake") return;
+  stopVoice(true);
   const r = Intake.back(intake);
   if (!r.ok) return;
   showError("");
@@ -474,6 +582,7 @@ async function submitAnswer(text) {
 $("answer-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   if ($("answer-btn").disabled) return;
+  stopVoice(true);
   showError("");
   const text = $("answer").value.trim();
   if (mode === "intake") await submitIntake(text);
@@ -552,12 +661,26 @@ async function enterChat(token) {
 
 // ---- 結果頁 --------------------------------------------------------------
 
-const result = { rows: [], saved: "", inputs: {} };
+const result = { rows: [], staff: [], saved: "", inputs: {} };
 
+let tempIdSeq = 0;
+const newTempId = () => `new-${Date.now().toString(36)}-${++tempIdSeq}`; // 新員工在存檔前的暫時 id，存檔後換成系統產生的
+
+const blankRow = () => ({ task: "", detail: "", product: "", assignee: null, errors: {} });
+const trimRow = (r) => ({ task: r.task.trim(), detail: r.detail.trim(), product: r.product.trim(), assignee: r.assignee || null });
+const trimStaff = (p) => ({ id: p.id, name: p.name.trim(), role: p.role.trim() });
+const staffById = (id) => result.staff.find((p) => p.id === id);
+const staffName = (p) => Staff.staffLabel(p) || "（未命名）";
+
+// 指派用員工姓名記錄（姓名不重複），這樣暫時 id 換成正式 id 不會讓畫面誤判成「有修改」
 function snapshot() {
   return JSON.stringify({
     vfp: $("vfp").value.trim(),
-    rows: result.rows.map((r) => [r.name.trim(), r.description.trim()]),
+    rows: result.rows.map((r) => {
+      const p = staffById(r.assignee);
+      return [r.task.trim(), r.detail.trim(), r.product.trim(), p ? p.name.trim() : ""];
+    }),
+    staff: result.staff.map((p) => [p.name.trim(), p.role.trim()]),
   });
 }
 
@@ -594,7 +717,10 @@ async function enterResult(token) {
   }
   const cur = s.result.edited || s.result.original;
   result.inputs = s.inputs || {};
-  result.rows = cur.byproducts.map((b) => ({ name: b.name, description: b.description }));
+  result.staff = (s.staff || []).map((p) => ({ id: p.id, name: p.name || "", role: p.role || "" }));
+  result.rows = cur.byproducts.map((b) => ({ ...blankRow(), task: b.task || "", detail: b.detail || "", product: b.product || "", assignee: b.assignee || null }));
+  updateStaffButton();
+  updateErrorSummary();
   $("vfp").value = cur.vfp;
   $("save-msg").textContent = "";
   renderRows();
@@ -625,20 +751,83 @@ function stopReveal() {
   document.querySelectorAll("#rows tr").forEach((tr) => (tr.style.animationDelay = ""));
 }
 
-function cell(className, field, index) {
-  const td = document.createElement("td");
-  td.className = className;
+function clearFieldError(obj, name, el) {
+  if (!obj.errors || !obj.errors[name]) return;
+  delete obj.errors[name];
+  el.classList.remove("invalid");
+  el.removeAttribute("aria-invalid");
+  el.removeAttribute("aria-describedby");
+  const msg = el.dataset.errId && document.getElementById(el.dataset.errId);
+  if (msg) msg.remove();
+  updateErrorSummary();
+}
+
+// 在控制項下方加錯誤小字，並標上 aria-invalid／aria-describedby
+function markInvalid(el, id, message) {
+  el.classList.add("invalid");
+  el.setAttribute("aria-invalid", "true");
+  el.setAttribute("aria-describedby", id);
+  el.dataset.errId = id;
+  const p = document.createElement("p");
+  p.className = "field-error";
+  p.id = id;
+  p.textContent = message;
+  return p;
+}
+
+// 回傳 DocumentFragment：輸入框，若這格有錯誤再加一行紅字
+function field(index, name, label, className, placeholder) {
+  const row = result.rows[index];
   const ta = document.createElement("textarea");
   ta.rows = 1;
-  ta.value = result.rows[index][field];
-  ta.setAttribute("aria-label", field === "name" ? `副產品 ${index + 1} 名稱` : `副產品 ${index + 1} 說明`);
+  ta.className = className;
+  ta.value = row[name];
+  if (placeholder) ta.placeholder = placeholder;
+  ta.setAttribute("aria-label", `第 ${index + 1} 項${label}`);
   ta.addEventListener("input", () => {
-    result.rows[index][field] = ta.value;
+    row[name] = ta.value;
     autoSize(ta);
     markDirty();
+    clearFieldError(row, name, ta);
   });
-  td.appendChild(ta);
-  return td;
+  const frag = document.createDocumentFragment();
+  frag.appendChild(ta);
+  if (row.errors[name]) frag.appendChild(markInvalid(ta, `err-${index}-${name}`, row.errors[name]));
+  return frag;
+}
+
+// 負責人下拉：未指派＋員工名單；名單為空時停用，點擊開啟名單面板
+function assigneeControl(index) {
+  const row = result.rows[index];
+  const sel = document.createElement("select");
+  sel.className = "assignee-select";
+  sel.setAttribute("aria-label", `第 ${index + 1} 項負責人`);
+  if (!result.staff.length) {
+    sel.add(new Option("請先新增員工名單", ""));
+    sel.classList.add("is-disabled");
+    sel.setAttribute("aria-disabled", "true");
+    const open = (ev) => {
+      ev.preventDefault();
+      openStaffDialog();
+    };
+    sel.addEventListener("mousedown", open);
+    sel.addEventListener("keydown", (ev) => {
+      if (["Enter", " ", "ArrowDown", "ArrowUp"].includes(ev.key)) open(ev);
+    });
+  } else {
+    sel.add(new Option("未指派", ""));
+    result.staff.forEach((p) => sel.add(new Option(staffName(p), p.id)));
+    sel.value = staffById(row.assignee) ? row.assignee : "";
+    sel.addEventListener("change", () => {
+      row.assignee = sel.value || null;
+      markDirty();
+      clearFieldError(row, "assignee", sel);
+    });
+  }
+  const frag = document.createDocumentFragment();
+  frag.appendChild(sel);
+  if (row.errors.assignee) frag.appendChild(markInvalid(sel, `err-${index}-assignee`, row.errors.assignee));
+  return frag;
 }
 
 function iconButton(label, text, disabled, onClick) {
@@ -660,11 +849,12 @@ function renderRows() {
   result.rows.forEach((_, i) => {
     const tr = document.createElement("tr");
     const act = document.createElement("td");
+    act.className = "act";
     const box = document.createElement("div");
     box.className = "row-actions";
     const move = (delta) => {
       const j = i + delta;
-      [result.rows[i], result.rows[j]] = [result.rows[j], result.rows[i]];
+      [result.rows[i], result.rows[j]] = [result.rows[j], result.rows[i]]; // 列物件整個換位置，負責人與錯誤標示跟著走
       markDirty();
       renderRows();
     };
@@ -675,10 +865,23 @@ function renderRows() {
         result.rows.splice(i, 1);
         markDirty();
         renderRows();
+        updateErrorSummary();
       })
     );
     act.appendChild(box);
-    tr.append(cell("name", "name", i), cell("desc", "description", i), act);
+    const seq = document.createElement("td");
+    seq.className = "seq";
+    seq.textContent = String(i + 1);
+    const taskTd = document.createElement("td");
+    taskTd.className = "name";
+    taskTd.append(field(i, "task", "工作項目", "task"), field(i, "detail", "工作內容", "detail", "工作內容說明"));
+    const productTd = document.createElement("td");
+    productTd.className = "desc";
+    productTd.appendChild(field(i, "product", "副產品", "product", "（未填）"));
+    const assigneeTd = document.createElement("td");
+    assigneeTd.className = "assignee";
+    assigneeTd.appendChild(assigneeControl(i));
+    tr.append(seq, taskTd, productTd, assigneeTd, act);
     tbody.appendChild(tr);
   });
   tbody.querySelectorAll("textarea").forEach(autoSize);
@@ -690,37 +893,291 @@ $("vfp").addEventListener("input", () => {
 });
 
 $("add-btn").addEventListener("click", () => {
-  result.rows.push({ name: "", description: "" });
+  result.rows.push(blankRow());
   markDirty();
   renderRows();
   const last = $("rows").lastElementChild;
   if (last) last.querySelector("textarea").focus();
 });
 
-// 儲存：成功回傳 true；失敗顯示錯誤並回傳 false
+// ---- 儲存驗證：錯誤標在欄位旁邊 -------------------------------------------
+
+function countErrors() {
+  return result.rows.reduce((n, r) => n + Object.keys(r.errors).length, 0) + result.staff.filter((p) => p.error).length;
+}
+
+function updateErrorSummary() {
+  const n = countErrors();
+  const el = $("form-errors");
+  el.textContent = n ? `有 ${n} 處需要修正，已標示在表格中` : "";
+  el.hidden = !n;
+}
+
+function clearAllErrors() {
+  result.rows.forEach((r) => (r.errors = {}));
+  result.staff.forEach((p) => delete p.error);
+}
+
+const applyRowErrors = (errors) => errors.forEach((e) => result.rows[e.row - 1] && (result.rows[e.row - 1].errors[e.field] = e.message));
+const applyStaffErrors = (errors) => errors.forEach((e) => result.staff[e.row - 1] && (result.staff[e.row - 1].error = e.message));
+
+// 重畫並把焦點放到第一個有錯的格子
+function showErrors() {
+  renderRows();
+  updateErrorSummary();
+  const hasStaffErr = result.staff.some((p) => p.error);
+  const first = document.querySelector('#rows [aria-invalid="true"]');
+  if (first) {
+    first.scrollIntoView({ block: "center", behavior: "smooth" });
+    first.focus({ preventScroll: true });
+  } else if (hasStaffErr) {
+    openStaffDialog();
+  }
+}
+
+// 前端驗證：有任何錯誤就標示並回傳 false（不呼叫後端）
+function validateBeforeSave() {
+  clearAllErrors();
+  const rowErrors = Staff.validateRows(result.rows);
+  const staffErrors = Staff.validateStaff(result.staff);
+  applyRowErrors(rowErrors);
+  applyStaffErrors(staffErrors);
+  if (!rowErrors.length && !staffErrors.length) {
+    updateErrorSummary();
+    return true;
+  }
+  showErrors();
+  return false;
+}
+
+// 送出員工名單；回來的名單順序與送出的相同，用位置把暫時 id 換成系統產生的 id，並同步表格裡的指派
+async function pushStaff() {
+  const data = await api("PUT", `/sessions/${store.get(KEY_SESSION)}/staff`, { staff: result.staff.map(trimStaff) });
+  const idMap = {};
+  data.staff.forEach((p, i) => (idMap[result.staff[i].id] = p.id));
+  result.rows.forEach((r) => {
+    if (r.assignee && idMap[r.assignee]) r.assignee = idMap[r.assignee];
+  });
+  result.staff = data.staff.map((p) => ({ id: p.id, name: p.name, role: p.role }));
+  updateStaffButton();
+}
+
+// 後端 422：用 errors 標在對應的格子；沒有 errors 就只顯示簡短訊息
+function handleServerError(e, step) {
+  if (e.status === 422 && Array.isArray(e.errors) && e.errors.length) {
+    if (step === "staff") applyStaffErrors(e.errors);
+    else applyRowErrors(e.errors);
+    showErrors();
+    renderStaffList();
+  }
+  showError(e.message);
+}
+
+// 儲存：成功回傳 true；失敗顯示錯誤並回傳 false。先驗證，通過才送（先員工名單，再副產品與指派）
 async function save() {
   showError("");
+  if (!validateBeforeSave()) return false;
   const btn = $("save-btn");
   btn.disabled = true;
   const label = btn.textContent;
   btn.textContent = "儲存中…";
   $("save-msg").textContent = "";
+  let step = "staff";
   try {
+    await pushStaff();
+    step = "rows";
     await api("PUT", `/sessions/${store.get(KEY_SESSION)}/byproducts`, {
       vfp: $("vfp").value.trim(),
-      byproducts: result.rows.map((r) => ({ name: r.name.trim(), description: r.description.trim() })),
+      byproducts: result.rows.map(trimRow),
     });
     result.saved = snapshot();
+    renderRows();
+    renderStaffList();
     $("save-msg").textContent = "已儲存";
     return true;
   } catch (e) {
-    showError(e.message);
+    handleServerError(e, step);
     return false;
   } finally {
     btn.disabled = false;
     btn.textContent = label;
   }
 }
+
+// ---- 員工名單面板 -----------------------------------------------------------
+
+const staffDlg = $("staff-dialog");
+
+function updateStaffButton() {
+  $("staff-btn").textContent = `員工名單（${result.staff.length} 人）`;
+}
+
+function setStaffMsg(text) {
+  $("staff-msg").textContent = text || "";
+}
+
+function renderStaffList() {
+  const ul = $("staff-list");
+  ul.replaceChildren();
+  result.staff.forEach((p, i) => {
+    const li = document.createElement("li");
+    li.className = "staff-row";
+    const name = document.createElement("input");
+    name.type = "text";
+    name.value = p.name;
+    name.placeholder = "姓名";
+    name.setAttribute("aria-label", `第 ${i + 1} 位姓名`);
+    name.addEventListener("input", () => {
+      p.name = name.value;
+      markDirty();
+      if (p.error) {
+        delete p.error;
+        name.classList.remove("invalid");
+        name.removeAttribute("aria-invalid");
+        name.removeAttribute("aria-describedby");
+        const m = document.getElementById(`staff-err-${i}`);
+        if (m) m.remove();
+        updateErrorSummary();
+      }
+    });
+    const role = document.createElement("input");
+    role.type = "text";
+    role.className = "role";
+    role.value = p.role;
+    role.placeholder = "職稱（選填）";
+    role.setAttribute("aria-label", `第 ${i + 1} 位職稱`);
+    role.addEventListener("input", () => {
+      p.role = role.value;
+      markDirty();
+    });
+    const del = iconButton(`刪除第 ${i + 1} 位`, "✕", false, () => {
+      result.staff.splice(i, 1);
+      result.rows.forEach((r) => {
+        if (r.assignee === p.id) r.assignee = null; // 刪掉的員工，指派自動改成未指派
+      });
+      markDirty();
+      updateStaffButton();
+      renderStaffList();
+    });
+    li.append(name, role, del);
+    if (p.error) li.appendChild(markInvalid(name, `staff-err-${i}`, p.error));
+    ul.appendChild(li);
+  });
+}
+
+function openStaffDialog() {
+  setStaffMsg("");
+  renderStaffList();
+  if (typeof staffDlg.showModal === "function") {
+    if (!staffDlg.open) staffDlg.showModal();
+  } else {
+    staffDlg.setAttribute("open", "");
+  }
+  const bad = staffDlg.querySelector('[aria-invalid="true"]');
+  (bad || $("staff-input")).focus();
+}
+
+staffDlg.addEventListener("close", () => {
+  updateStaffButton();
+  renderRows(); // 名單變了，下拉選單要跟著更新
+  $("staff-btn").focus();
+});
+
+function addNames(names) {
+  const r = Staff.mergeStaff(result.staff, names.map((name) => ({ name, role: "" })), newTempId);
+  result.staff = r.staff;
+  if (r.added) markDirty();
+  setStaffMsg(names.length ? Staff.importSummary(r) : "");
+  updateStaffButton();
+  renderStaffList();
+}
+
+function addFromInput() {
+  const box = $("staff-input");
+  const names = Staff.parseNames(box.value);
+  if (!names.length) return;
+  addNames(names);
+  box.value = "";
+  box.focus();
+}
+
+$("staff-btn").addEventListener("click", openStaffDialog);
+$("staff-add-btn").addEventListener("click", addFromInput);
+$("staff-input").addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter" && !ev.isComposing && ev.keyCode !== 229) {
+    ev.preventDefault();
+    addFromInput();
+  }
+});
+$("staff-input").addEventListener("paste", (ev) => {
+  const text = (ev.clipboardData && ev.clipboardData.getData("text")) || "";
+  const names = Staff.parseNames(text);
+  if (names.length > 1) {
+    ev.preventDefault();
+    addNames(names);
+  }
+});
+
+$("staff-import-btn").addEventListener("click", () => $("staff-file").click());
+$("staff-file").addEventListener("change", async (ev) => {
+  const file = ev.target.files && ev.target.files[0];
+  ev.target.value = "";
+  if (!file) return;
+  try {
+    const text = Staff.decodeBytes(new Uint8Array(await file.arrayBuffer()));
+    const people = Staff.parseStaffCsv(text);
+    if (!people.length) {
+      setStaffMsg("檔案裡沒有讀到任何姓名");
+      return;
+    }
+    const r = Staff.mergeStaff(result.staff, people, newTempId);
+    result.staff = r.staff;
+    if (r.added) markDirty();
+    setStaffMsg(Staff.importSummary(r));
+    updateStaffButton();
+    renderStaffList();
+  } catch {
+    setStaffMsg("讀不到這個檔案，請確認是 .csv 或 .txt");
+  }
+});
+
+$("staff-template-btn").addEventListener("click", () => {
+  downloadBlob(new Blob([Staff.templateCsv()], { type: "text/csv;charset=utf-8" }), "員工名單範本.csv");
+});
+
+$("staff-close-btn").addEventListener("click", () => staffDlg.close());
+
+// 面板的儲存：只驗證並送出名單
+$("staff-save-btn").addEventListener("click", async () => {
+  showError("");
+  result.staff.forEach((p) => delete p.error);
+  const errors = Staff.validateStaff(result.staff);
+  if (errors.length) {
+    applyStaffErrors(errors);
+    renderStaffList();
+    updateErrorSummary();
+    setStaffMsg(`有 ${errors.length} 處需要修正`);
+    const bad = staffDlg.querySelector('[aria-invalid="true"]');
+    if (bad) bad.focus();
+    return;
+  }
+  try {
+    await pushStaff();
+    const o = JSON.parse(result.saved || "{}");
+    o.staff = JSON.parse(snapshot()).staff; // 名單已存，不再算「尚未儲存」
+    if (result.saved) result.saved = JSON.stringify(o);
+    updateErrorSummary();
+    renderStaffList();
+    setStaffMsg("名單已儲存");
+  } catch (e) {
+    if (e.status === 422 && Array.isArray(e.errors)) {
+      applyStaffErrors(e.errors);
+      renderStaffList();
+      updateErrorSummary();
+    }
+    setStaffMsg(e.message);
+  }
+});
 
 $("save-btn").addEventListener("click", save);
 
@@ -791,7 +1248,10 @@ async function exportAs(kind) {
 function currentExportData() {
   return {
     vfp: $("vfp").value.trim(),
-    byproducts: result.rows.map((r) => ({ name: r.name.trim(), description: r.description.trim() })),
+    byproducts: result.rows.map((r) => {
+      const p = staffById(r.assignee);
+      return { ...trimRow(r), owner: p ? Staff.staffLabel(p) : "" };
+    }),
     industry: result.inputs.industry || "",
     name: result.inputs.name || "",
     date: new Date(),

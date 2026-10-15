@@ -145,15 +145,15 @@ def test_llm_failure_is_503_and_not_saved(tmp_path):
 
 
 def test_edit_result_keeps_both_versions(make):
-    svc, _ = make(vfp("原始", [{"name": "a", "description": "b"}]))
+    svc, _ = make(vfp("原始", [{"task": "a", "detail": "b", "product": "p"}]))
     sid = svc.start(**START).session_id
-    out = svc.edit_result(sid, " 改過 ", [{"name": "x", "description": "y"}, {"name": "z", "description": "w"}])
-    assert out.edited and out.vfp == "改過" and [b["name"] for b in out.byproducts] == ["x", "z"]
+    out = svc.edit_result(sid, " 改過 ", [{"task": "x", "detail": "y", "product": "p"}, {"task": "z", "detail": "w", "product": "p"}])
+    assert out.edited and out.vfp == "改過" and [b["task"] for b in out.byproducts] == ["x", "z"]
     r = svc.get(sid)["result"]
-    assert r["original"] == {"vfp": "原始", "byproducts": [{"name": "a", "description": "b"}]}
+    assert r["original"] == {"vfp": "原始", "byproducts": [{"task": "a", "detail": "b", "product": "p", "assignee": None}]}
     assert r["edited"]["vfp"] == "改過" and len(r["edited"]["byproducts"]) == 2
     # 再改一次，原始版本仍在
-    svc.edit_result(sid, "又改", [{"name": "q", "description": "r"}])
+    svc.edit_result(sid, "又改", [{"task": "q", "detail": "r", "product": "p"}])
     assert svc.get(sid)["result"]["original"]["vfp"] == "原始"
 
 
@@ -161,9 +161,9 @@ def test_edit_result_only_in_vfp_state_and_validates(make):
     svc, _ = make(clarify("Q1"), vfp())
     sid = svc.start(**START).session_id
     with pytest.raises(WrongState):
-        svc.edit_result(sid, "V", [{"name": "a", "description": "b"}])
+        svc.edit_result(sid, "V", [{"task": "a", "detail": "b", "product": "p"}])
     svc.answer(sid, "A")
-    for vf, items in (("", [{"name": "a", "description": "b"}]), ("V", []), ("V", [{"name": "a", "description": ""}])):
+    for vf, items in (("", [{"task": "a", "detail": "b", "product": "p"}]), ("V", []), ("V", [{"task": "a", "detail": "b", "product": ""}]), ("V", [{"task": "", "detail": "b", "product": "p"}])):
         with pytest.raises(InvalidInput):
             svc.edit_result(sid, vf, items)
 
@@ -177,7 +177,7 @@ def scripted_input(*lines):
 
 
 def test_chat_runs_the_whole_flow_and_prints_table(make, capsys):
-    svc, _ = make(clarify("你希望客人走出去變成什麼？"), vfp("開心的客人", [{"name": "備料", "description": "先備好"}]))
+    svc, _ = make(clarify("你希望客人走出去變成什麼？"), vfp("開心的客人", [{"task": "備料", "detail": "先備好", "product": "p"}]))
     # 稱呼 / 產業 / 產品 / 賣得如何 / 自評 / 原因 / 回答
     inputs = scripted_input("王主管", "9", "我們做設計", "", "", "", "開心")
     assert chat.main([], input_fn=inputs, service=svc) == 0

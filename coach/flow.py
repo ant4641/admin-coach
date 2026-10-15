@@ -17,7 +17,8 @@ from typing import Callable
 
 from coach.inputs import build_inputs, parse_industries
 from coach.llm import LLMClient, LLMResult
-from coach.prompt import CoachReply, build_messages, parse_reply, validate_byproducts
+from coach.prompt import CoachReply, ValidationErrors, build_messages, parse_reply, upgrade_byproduct, validate_edited_byproducts
+from coach.staff import validate_staff
 from coach.rules import Rules, load_rules
 from coach.store import SessionStore
 
@@ -28,6 +29,10 @@ class FlowError(Exception):
 
 class InvalidInput(FlowError):
     status_code = 422
+
+    def __init__(self, message: str = "", errors: list[dict] | None = None) -> None:
+        super().__init__(message)
+        self.errors = errors or []
 
 
 class WrongState(FlowError):
@@ -72,7 +77,8 @@ def _rules_info(rules: Rules) -> dict:
 def current_result(s: dict) -> dict:
     """session 目前採用的 vfp 與副產品：主管改過用改過的，否則是模型原始版本。"""
     r = s["result"]
-    return r["edited"] or r["original"]
+    cur = r["edited"] or r["original"]
+    return {**cur, "byproducts": [upgrade_byproduct(b) for b in cur["byproducts"]]}
 
 
 class CoachService:
@@ -131,28 +137,66 @@ class CoachService:
             return self._run(s, self._rules_loader())
 
     def edit_result(self, session_id: str, vfp: str, byproducts: list[dict]) -> Outcome:
-        """整份覆寫 vfp 與副產品。模型原始版本留在 result.original，主管版本放 result.edited。"""
+        """整份覆寫 vfp 與副產品（含負責人）。模型原始版本留在 result.original，主管版本放 result.edited。"""
         vfp = (vfp or "").strip()
         if not vfp:
             raise InvalidInput("VFP 不可為空")
         try:
-            items = validate_byproducts(byproducts)
-        except ValueError as e:
-            raise InvalidInput(str(e)) from e
+            validate_edited_byproducts(byproducts)
+        except ValidationErrors as e:
+            raise InvalidInput(str(e), e.errors) from e
         with self._locked(session_id):
             s = self.store.load(session_id)
             if s["status"] != "vfp":
                 raise WrongState(f"目前狀態是 {s['status']}，只有 vfp 狀態能修改")
+            try:
+                items = validate_edited_byproducts(byproducts, {p["id"] for p in s.get("staff", [])})
+            except ValidationErrors as e:
+                raise InvalidInput(str(e), e.errors) from e
             s["result"]["edited"] = {"vfp": vfp, "byproducts": items, "at": _now()}
             self._save(s)
             return self._outcome(s)
+
+    def get_staff(self, session_id: str) -> list[dict]:
+        s = self.store.load(session_id)
+        if s["status"] != "vfp":
+            raise WrongState(f"目前狀態是 {s['status']}，只有 vfp 狀態能使用員工名單")
+        return list(s.get("staff", []))
+
+    def set_staff(self, session_id: str, staff: list[dict]) -> list[dict]:
+        """整份覆寫員工名單。刪除的員工，原本指派給他的項目自動改成未指派。"""
+        with self._locked(session_id):
+            s = self.store.load(session_id)
+            if s["status"] != "vfp":
+                raise WrongState(f"目前狀態是 {s['status']}，只有 vfp 狀態能使用員工名單")
+            old_ids = {p["id"] for p in s.get("staff", [])}
+            try:
+                items = validate_staff(staff, old_ids)
+            except ValidationErrors as e:
+                raise InvalidInput(str(e), e.errors) from e
+            keep = {p["id"] for p in items}
+            edited = s["result"].get("edited")
+            if edited:
+                edited["byproducts"] = [
+                    {**b, "assignee": b.get("assignee") if b.get("assignee") in keep else None} for b in edited["byproducts"]
+                ]
+            s["staff"] = items
+            self._save(s)
+            return items
 
     def industries(self) -> list[str]:
         """產業清單（規則檔 2.1），第 n 項的編號是 n。"""
         return parse_industries(self._rules_loader().text)
 
     def get(self, session_id: str) -> dict:
-        return self.store.load(session_id)
+        s = self.store.load(session_id)
+        if s.get("result"):  # 舊格式只在回傳時轉換，不改寫檔案
+            r = s["result"]
+            for key in ("original", "edited"):
+                if r.get(key):
+                    r[key] = {**r[key], "byproducts": [upgrade_byproduct(b) for b in r[key]["byproducts"]]}
+        s.setdefault("staff", [])  # 舊 session 沒有名單：回傳時補預設值，不改寫檔案
+        return s
 
     # ---- 呼叫模型並套用結果 ---------------------------------------------
 

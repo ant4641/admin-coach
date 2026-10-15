@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+import re
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,20 @@ ROOT = Path(__file__).resolve().parent.parent
 SESSIONS_DIR = ROOT / "outputs" / "sessions"
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
+_ASSET_REF = re.compile(r'((?:src|href)=")(/static/[\w.-]+\.(?:js|css))(")')
+_REVALIDATE_SUFFIXES = (".js", ".css", ".html")
+
+
+def render_index() -> str:
+    """index.html：JS／CSS 的網址動態加上 ?v=檔案修改時間（秒），檔案一改瀏覽器就會重抓。"""
+
+    def add_version(m: re.Match) -> str:
+        path = WEB_DIR / m.group(2).removeprefix("/static/")
+        v = int(path.stat().st_mtime) if path.exists() else 0
+        return f"{m.group(1)}{m.group(2)}?v={v}{m.group(3)}"
+
+    return _ASSET_REF.sub(add_version, (WEB_DIR / "index.html").read_text(encoding="utf-8"))
+
 
 class StartBody(BaseModel):
     name: str = Field(description="稱呼（必填），例如「林老闆」")
@@ -42,8 +57,20 @@ class AnswerBody(BaseModel):
 
 
 class Byproduct(BaseModel):
-    name: str = Field(description="副產品名稱")
-    description: str = Field(description="說明")
+    task: str = Field("", description="工作項目名稱（不可空白）")
+    detail: str = Field("", description="工作內容說明（可空白）")
+    product: str = Field("", description="副產品（不可空白）")
+    assignee: str | None = Field(None, description="負責人（員工 id）；None＝未指派")
+
+
+class StaffItem(BaseModel):
+    id: str = Field("", description="員工 id；新員工留空由系統產生")
+    name: str = Field("", description="姓名（必填，1～20 字，名單內不可重複）")
+    role: str = Field("", description="職稱（選填）")
+
+
+class StaffBody(BaseModel):
+    staff: list[StaffItem] = Field(description="整份員工名單（最多 50 人）；會整份覆寫")
 
 
 class ByproductsBody(BaseModel):
@@ -109,13 +136,25 @@ def create_app(
         rate.check(request.headers, request.client.host if request.client else None)
     app = FastAPI(title="管到飛", description="帶主管推理出最終有價值產品（VFP），再拆成副產品")
 
+    @app.middleware("http")
+    async def _revalidate_web_files(request: Request, call_next):
+        """首頁與 .js／.css／.html 每次都要向伺服器重新驗證（有 ETag 時回 304）；圖片、字型維持一般快取。"""
+        response = await call_next(request)
+        path = request.url.path
+        if path == "/" or (path.startswith("/static/") and path.endswith(_REVALIDATE_SUFFIXES)):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
     @app.exception_handler(SessionNotFound)
     async def _not_found(_: Request, exc: SessionNotFound):
         return JSONResponse(status_code=404, content={"detail": f"找不到 session：{exc}"})
 
     @app.exception_handler(FlowError)
     async def _flow_error(_: Request, exc: FlowError):
-        return JSONResponse(status_code=exc.status_code, content={"detail": str(exc)})
+        content = {"detail": str(exc)}
+        if getattr(exc, "errors", None):
+            content["errors"] = exc.errors
+        return JSONResponse(status_code=exc.status_code, content=content)
 
     @app.exception_handler(RequestValidationError)
     async def _bad_request(_: Request, exc: RequestValidationError):
@@ -162,6 +201,17 @@ def create_app(
     def put_byproducts(session_id: str, body: ByproductsBody):
         return reply(svc.edit_result(session_id, body.vfp, [b.model_dump() for b in body.byproducts]))
 
+    @app.get("/sessions/{session_id}/staff", summary="員工名單（只有 vfp 狀態可用，其他狀態回 409）")
+    def get_staff(session_id: str):
+        return {"staff": svc.get_staff(session_id)}
+
+    @app.put(
+        "/sessions/{session_id}/staff",
+        summary="整份覆寫員工名單（vfp 狀態可用）。刪除員工時，他的指派自動改成未指派；驗證失敗回 422 與 errors",
+    )
+    def put_staff(session_id: str, body: StaffBody):
+        return {"staff": svc.set_staff(session_id, [p.model_dump() for p in body.staff])}
+
     @app.get("/sessions/{session_id}", summary="完整紀錄；vfp 之後 result.original 是模型原始版、result.edited 是主管修改版")
     def get_session(session_id: str):
         return svc.get(session_id)
@@ -174,7 +224,7 @@ def create_app(
         cur = current_result(s)
         today = date.today()
         return Response(
-            content=build_xlsx(cur["vfp"], cur["byproducts"], today, s["inputs"]),
+            content=build_xlsx(cur["vfp"], cur["byproducts"], today, s["inputs"], s.get("staff", [])),
             media_type=XLSX_TYPE,
             headers={"Content-Disposition": content_disposition(today)},
         )
@@ -187,7 +237,7 @@ def create_app(
 
     @app.get("/", include_in_schema=False)
     def index():
-        return FileResponse(WEB_DIR / "index.html")
+        return HTMLResponse(render_index(), headers={"Cache-Control": "no-cache"})
 
     # 網頁的靜態檔全部本機提供（不用 CDN）。放在最後，不蓋掉上面的 API 路由
     app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")

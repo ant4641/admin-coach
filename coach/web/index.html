@@ -60,9 +60,13 @@
         <form id="answer-form" class="answer-form">
           <label for="answer" class="sr-only">你的回答</label>
           <textarea id="answer" rows="2" placeholder="輸入你的回答"></textarea>
+          <p id="voice-hint" class="voice-hint"></p>
           <p id="answer-hint" class="answer-hint" role="alert" hidden></p>
           <div class="answer-buttons">
             <button id="prev-btn" class="btn btn-ghost" type="button" hidden>← 上一題</button>
+            <button id="mic-btn" class="mic-btn" type="button" title="語音由瀏覽器的辨識服務處理" aria-label="語音輸入" aria-pressed="false" hidden>
+              <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4M8 22h8"/></svg>
+            </button>
             <button id="answer-btn" class="btn" type="submit">送出</button>
           </div>
         </form>
@@ -77,23 +81,28 @@
       <div id="result-card" class="card">
         <h2 class="result-title">你的最終有價值產品(VFP)與副產品清單</h2>
         <p class="hint result-hint">副產品由源頭排到終點。可以直接修改文字、調整順序、刪除或新增，改完按「儲存」。</p>
-        <table class="result-table">
+        <p id="form-errors" class="form-errors" role="alert" hidden></p>
+        <div class="table-scroll"><table class="result-table">
+          <colgroup><col class="c-seq"><col class="c-task"><col class="c-product"><col class="c-assignee"><col class="c-act"></colgroup>
           <thead>
             <tr class="vfp-row">
-              <th scope="row" class="vfp-label"><span class="vfp-label-inner"><svg class="vfp-star" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 2l2.9 6.6 7.1.7-5.3 4.8 1.5 7-6.2-3.6-6.2 3.6 1.5-7L2 9.3l7.1-.7z" fill="#0C3467"/></svg>VFP</span></th>
-              <td colspan="2"><textarea id="vfp" rows="1" aria-label="VFP"></textarea></td>
+              <th scope="row" class="vfp-label" colspan="2"><span class="vfp-label-inner"><svg class="vfp-star" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 2l2.9 6.6 7.1.7-5.3 4.8 1.5 7-6.2-3.6-6.2 3.6 1.5-7L2 9.3l7.1-.7z" fill="#0C3467"/></svg>VFP</span></th>
+              <td colspan="3" class="vfp-cell"><textarea id="vfp" rows="1" aria-label="VFP"></textarea></td>
             </tr>
             <tr class="head-row">
-              <th class="col-name">副產品</th>
-              <th class="col-desc">說明</th>
+              <th class="col-seq">序號</th>
+              <th class="col-name">工作項目</th>
+              <th class="col-desc">副產品</th>
+              <th class="col-assignee">負責人</th>
               <th class="col-act"><span class="sr-only">操作</span></th>
             </tr>
           </thead>
           <tbody id="rows"></tbody>
-        </table>
+        </table></div>
         <div class="result-actions">
           <div class="actions-left">
             <button id="add-btn" class="btn btn-ghost" type="button">＋ 新增副產品</button>
+            <button id="staff-btn" class="btn btn-ghost" type="button" aria-haspopup="dialog">員工名單（0 人）</button>
             <button id="save-btn" class="btn" type="button">儲存</button>
           </div>
           <div class="menu-wrap">
@@ -112,8 +121,32 @@
       </div>
     </section>
   </main>
+  <dialog id="staff-dialog" class="staff-dialog" aria-labelledby="staff-title">
+    <div class="staff-box">
+      <h3 id="staff-title">員工名單</h3>
+      <div class="staff-add">
+        <label for="staff-input" class="sr-only">新增員工姓名</label>
+        <input id="staff-input" type="text" autocomplete="off" placeholder="輸入姓名，按 Enter 新增（可貼上多人，用換行、逗號或頓號分隔）">
+        <button id="staff-add-btn" class="btn btn-ghost" type="button">新增</button>
+      </div>
+      <div class="staff-tools">
+        <button id="staff-import-btn" class="btn btn-ghost" type="button">匯入 CSV</button>
+        <input id="staff-file" type="file" accept=".csv,.txt,text/csv,text/plain" hidden>
+        <button id="staff-template-btn" class="btn btn-ghost" type="button">下載範本</button>
+      </div>
+      <p id="staff-msg" class="staff-msg" role="status"></p>
+      <ul id="staff-list" class="staff-list"></ul>
+      <div class="staff-foot">
+        <button id="staff-save-btn" class="btn" type="button">儲存名單</button>
+        <button id="staff-close-btn" class="btn btn-ghost" type="button">關閉</button>
+      </div>
+    </div>
+  </dialog>
+  <div id="app-version" class="app-version" aria-hidden="true"></div>
   <script src="/static/export-image.js"></script>
   <script src="/static/intake.js"></script>
+  <script src="/static/voice.js"></script>
+  <script src="/static/staff.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>
