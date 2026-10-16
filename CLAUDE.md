@@ -7,6 +7,14 @@
 3. 資訊足夠時產出一句話的 VFP，再拆成「副產品」（由源頭排到終點）；資訊不足就追問，不硬產出
 4. 產出後主管可以修改 VFP 與副產品（保留模型原始版本與主管修改版本）
 
+## 開發原則（雲端部署起適用）
+1. **規則與業務邏輯放後端，前端只負責顯示與呼叫 API。** 之後 Flutter App、LINE Bot 會共用同一個後端，前端不得自己實作判斷規則。
+2. **API 的請求與回應格式要穩定。** 變更時要相容（只加欄位、不改意義）或升版；改完確認 FastAPI 的 `/docs` 反映實際行為（`tests/test_api.py::test_docs_page_and_endpoints_listed` 會擋漏列的路由）。
+3. **重要功能的測試寫在後端**（pytest）。前端 node 測試只測純函式。
+4. **資料表變更一律走 Alembic migration，不得手改資料庫。** 改 `coach/db.py` → `alembic revision --autogenerate` → 人工檢查 → 測試會比對模型與 migration 是否一致。
+5. 金鑰、連線字串只從環境變數讀（`coach/settings.py`）；日誌與回應不得含金鑰、連線字串、使用者輸入內容（日誌只記 session id 與狀態、例外類型）。
+6. 對使用者的錯誤訊息一律友善中文，不回堆疊或供應商原始訊息；技術細節放在例外的 `debug` 屬性，只給命令列工具看。
+
 ## 規則檔（產品的大腦）
 - 位置：`coach_rules.md`（專案根目錄）
 - **不可由 AI 修改內容**。發現矛盾或缺漏 → 列出來問使用者。
@@ -25,7 +33,11 @@ coach/
   prompt.py           組 messages（規則檔當 system）、解析 clarify / vfp 回覆
   llm.py              LLM 抽象層（azure / openai），換供應商只改這裡
   flow.py             對話狀態機（clarify → vfp），API 與 chat 共用；含 edit_result
-  store.py            session 存取（JSON 檔）
+  settings.py         環境變數集中管理：資料庫連線字串、雲端必要變數檢查（APP_ENV=production 才強制）
+  db.py               SQLAlchemy 引擎與資料表（sessions）；連線池、pool_pre_ping、Postgres 強制 SSL
+  migrate.py          程式內套用 Alembic migration
+  serve.py            雲端啟動入口 python -m coach.serve（檢查變數 → migration → uvicorn 0.0.0.0:$PORT）
+  store.py            session 存取（資料庫；介面 new_id/load/save 不變）；JsonFileStore 是舊實作，只留給測試
   display.py          命令列文字表格（處理中文字寬度）
   cli.py              測試案例執行器（多輪、安全上限 10 輪）
   chat.py             互動式命令列
@@ -34,8 +46,12 @@ coach/
   launch.py           發表用啟動（uvicorn + ngrok 公開網址 + QR + 開瀏覽器）；python -m coach.launch [--no-tunnel]
   tunnel.py           ngrok 通道、網址檔、QR（SVG）的純函式與可替換元件
   ratelimit.py        記憶體限流與來源 IP 判斷
-  api.py              FastAPI：GET /industries、POST /sessions、POST /sessions/{id}/answer、PUT /sessions/{id}/byproducts、GET /sessions/{id}、GET /sessions/{id}/export.xlsx，並在 / 提供網頁
+  api.py              FastAPI：GET /healthz、GET /industries、POST /sessions、POST /sessions/{id}/answer、PUT /sessions/{id}/byproducts、GET /sessions/{id}、GET /sessions/{id}/export.xlsx，並在 / 提供網頁
   web/                三頁網頁（index.html、style.css、app.js、intake.js、export-image.js）；intake.js 是六題的狀態邏輯（純函式，不碰 DOM）；assets/ 放 sky.jpg、logo.png（選用）、icons/*.svg；全部本機提供，不用 CDN
+migrations/           Alembic（資料表變更的唯一管道）；alembic.ini 在根目錄
+scripts/              一次性工具：import_json_sessions.py（舊 JSON session 匯入資料庫，預設 dry-run）
+docs/DEPLOY.md        Render + Neon 部署、驗證、安全、OIDC 預留、已知風險
+render.yaml           Render Blueprint（只列環境變數名稱）
 test_cases/           測試輸入（*.md，front matter 有 expected_status）
 outputs/              每次執行的輸出（依案例分資料夾）+ runs.csv；sessions/<id>.json 是對話紀錄
 tests/                pytest；tests/js/ 是 node 內建 test runner 的前端邏輯測試（pytest 會呼叫，找不到 node 就跳過）（用 tests/fakes.py 的替身，不需金鑰；不驗證規則效果）
@@ -47,6 +63,8 @@ tests/                pytest；tests/js/ 是 node 內建 test runner 的前端�
 - 自評分數與原因只存檔，不送模型。
 - 追問輪數產品沒有上限；vfp 之後 `answer` 回 409。
 - 模型回覆無法解析 → 不存檔，可重送。
+- session 存在資料庫 `sessions` 表（整份內容放 `payload` JSON/JSONB）。`DATABASE_URL` 有設就用它（Neon Postgres，psycopg 3，SSL），沒設用本機 `outputs/coach.db`（SQLite，首次使用自動建表）。
+- session id 是 `secrets.token_urlsafe(16)`（128 位元），它就是唯一的存取憑證（還沒有登入）；不可改回可預測的格式。
 
 ## 案例格式（test_cases/*.md）
 front matter：`title`、`expected_status`（clarify | vfp）、選用 `todo: 待補`（會被跳過）。
@@ -66,7 +84,7 @@ front matter：`title`、`expected_status`（clarify | vfp）、選用 `todo: �
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements-dev.txt   # 含 requirements.txt（執行用，Render 只裝這份）＋ pytest
 copy .env.example .env      # 填入 Azure OpenAI 端點/金鑰/部署名
 
 python -m coach.cli --all                          # 跑全部案例（待補的略過）
@@ -76,6 +94,9 @@ python -m coach.cli --all --dry-run                # 不呼叫 LLM，第一輪 m
 uvicorn coach.api:app --reload                     # 網頁 http://127.0.0.1:8000/ ，API 文件 /docs
 python -m coach.check                             # 發表前檢查：模型連線、網頁檔案、sky/logo、8000 連接埠（全部 OK 結束碼 0）
 python -m coach.chat                               # 互動式命令列（--case / --resume / --list）
+python -m coach.serve                              # 雲端啟動入口（Render 的 Start Command）
+alembic upgrade head                               # 手動套用 migration（連 DATABASE_URL_DIRECT，沒有就 DATABASE_URL）
+python -m scripts.import_json_sessions [--apply]   # 舊 JSON session 匯入資料庫；沒加 --apply 只印數量
 ```
 Windows 雙擊（不用 .ps1，避免執行原則被擋）：
 - `bat/run.bat`：啟用 .venv、呼叫 `python -m coach.launch`（啟動 uvicorn、ngrok 公開網址、QR、開兩個分頁），結束前 pause
@@ -93,7 +114,7 @@ Windows 雙擊（不用 .ps1，避免執行原則被擋）：
 - **不要在同一台電腦重複開多個 run.bat**（8000 連接埠會被占用，啟動程式會提示先關閉舊的視窗）。
 - 取不到公開網址（ngrok 不存在、authtoken 無效、網路被擋、逾時）不會中止，伺服器照常運作，`/qr` 顯示「目前沒有公開網址」；網路被擋時建議改用手機熱點。authtoken 要重設：`ngrok config add-authtoken <token>`。
 - 每次啟動都會先刪掉 `outputs/qr/`，再寫入新的 `public_url.txt` 與 `qr.svg`。`/qr` 優先讀 `public_url.txt`，沒有才用環境變數 `PUBLIC_URL`。
-- 會呼叫模型的端點（POST /sessions、POST /sessions/{id}/answer）有記憶體限流：每個來源 IP 每 10 分鐘 30 次、全站每小時 300 次，超過回 429「目前使用的人比較多，請稍後再試」。可用環境變數 `RATE_LIMIT_IP_MAX`、`RATE_LIMIT_IP_WINDOW_SECONDS`、`RATE_LIMIT_GLOBAL_MAX`、`RATE_LIMIT_GLOBAL_WINDOW_SECONDS` 調整。來源 IP 依序取 `CF-Connecting-IP`、`X-Forwarded-For` 第一個值、連線位址。
+- 會呼叫模型的端點（POST /sessions、POST /sessions/{id}/answer）有記憶體限流：每個來源 IP 每 10 分鐘 30 次、全站每小時 300 次，超過回 429「目前使用的人比較多，請稍後再試」。可用環境變數 `RATE_LIMIT_IP_MAX`、`RATE_LIMIT_IP_WINDOW_SECONDS`、`RATE_LIMIT_GLOBAL_MAX`、`RATE_LIMIT_GLOBAL_WINDOW_SECONDS` 調整。來源 IP（本機／ngrok）依序取 `CF-Connecting-IP`、`X-Forwarded-For` 第一個值、連線位址；雲端（`APP_ENV=production`）見「雲端部署」一節。
 
 檢查失敗時會用中文說明：401 金鑰錯、404 部署名稱錯、400 API version 錯（要填 API 版本如 2024-10-21，不是模型版本）、逾時或連線失敗、`.env` 缺哪個欄位。金鑰不會被印出。
 
@@ -104,7 +125,14 @@ Windows 雙擊（不用 .ps1，避免執行原則被擋）：
 ## 測試
 ```powershell
 pytest -q
+$env:TEST_DATABASE_URL="<可隨意寫入的 Postgres>"; pytest tests/test_cloud.py -k postgres   # 選用，預設略過
 ```
+`tests/conftest.py` 會把所有測試的資料庫指到暫存 SQLite。
+
+## 雲端部署
+Render（單一 Web Service，同網域提供 API 與 `coach/web/`）＋ Neon Postgres ＋ Azure OpenAI。步驟、環境變數、驗證清單、風險、之後加 Google OIDC 要改的地方都在 `docs/DEPLOY.md`。
+- `APP_ENV=production` 時啟動檢查必要環境變數（只報名稱不印值），限流只信 `X-Forwarded-For` 從右數第 `TRUSTED_PROXY_HOPS`（預設 1）個值。
+- `GET /healthz` 給 Render 健康檢查，不呼叫模型、不連資料庫。
 
 ## 安全規則
 - **絕不 commit `.env` 或任何金鑰**。只提交 `.env.example`。

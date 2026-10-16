@@ -19,6 +19,10 @@ venv/
 Thumbs.db
 .DS_Store
 
+# 本機資料庫
+*.db
+*.sqlite3
+
 # 執行輸出（含 sessions 對話紀錄，內有使用者資料）
 outputs/
 public/

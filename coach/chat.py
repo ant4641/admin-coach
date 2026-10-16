@@ -11,7 +11,6 @@ python -m coach.chat --list                                   # 列出所有 ses
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 from typing import Callable
@@ -24,10 +23,9 @@ from coach.flow import CoachService, FlowError, Outcome, current_result
 from coach.inputs import Q_INDUSTRY, Q_NAME, Q_PRODUCT, Q_REASON, Q_SALES, Q_SCORE, is_other, parse_industries
 from coach.llm import get_llm
 from coach.rules import load_rules
-from coach.store import JsonFileStore, SessionNotFound
+from coach.store import DbSessionStore, SessionNotFound, default_store
 
 ROOT = Path(__file__).resolve().parent.parent
-SESSIONS_DIR = ROOT / "outputs" / "sessions"
 
 InputFn = Callable[[str], str]
 
@@ -93,9 +91,8 @@ def _print_state(s: dict) -> None:
         print(render_table(cur["vfp"], cur["byproducts"]) + "\n")
 
 
-def _list_sessions(store: JsonFileStore) -> None:
-    for p in sorted(store.directory.glob("*.json")) if store.directory.exists() else []:
-        s = json.loads(p.read_text(encoding="utf-8"))
+def _list_sessions(store: DbSessionStore) -> None:
+    for s in store.list_all():
         print(f"{s['id']}  {s['status']:8}  {s['inputs']['name']}")
 
 
@@ -118,11 +115,10 @@ def main(argv: list[str] | None = None, input_fn: InputFn = input, service: Coac
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
 
-    store = JsonFileStore(SESSIONS_DIR)
     if args.list:
-        _list_sessions(store)
+        _list_sessions(default_store())
         return 0
-    svc = service or CoachService(store, get_llm)
+    svc = service or CoachService(default_store(), get_llm)
 
     session_id = args.resume
     try:
@@ -145,7 +141,7 @@ def main(argv: list[str] | None = None, input_fn: InputFn = input, service: Coac
         print(f"找不到 session：{e}")
         return 1
     except FlowError as e:
-        print(f"\n失敗（{type(e).__name__}）：{e}")
+        print(f"\n失敗（{type(e).__name__}）：{e.debug or e}")
         if session_id:
             print(f"這一步沒有被存檔，session 維持原樣；用 --resume {session_id} 重新接續即可。")
         return 1

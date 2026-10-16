@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from datetime import date
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -15,16 +17,20 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import SQLAlchemyError
+
+from coach import settings
 
 from coach.export import XLSX_TYPE, build_xlsx, content_disposition
 from coach.flow import CoachService, FlowError, WrongState, current_result
 from coach.llm import get_llm
 from coach.ratelimit import RateLimiter
 from coach.tunnel import QR_DIR, make_qr_svg, read_public_url
-from coach.store import JsonFileStore, SessionNotFound
+from coach.store import DefaultStore, SessionNotFound
+
+log = logging.getLogger("coach.api")
 
 ROOT = Path(__file__).resolve().parent.parent
-SESSIONS_DIR = ROOT / "outputs" / "sessions"
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
 _ASSET_REF = re.compile(r'((?:src|href)=")(/static/[\w.-]+\.(?:js|css))(")')
@@ -127,19 +133,33 @@ def create_app(
     service: CoachService | None = None, limiter: RateLimiter | None = None, qr_dir: Path | None = None
 ) -> FastAPI:
     load_dotenv(ROOT / ".env")
-    svc = service or CoachService(JsonFileStore(SESSIONS_DIR), get_llm)
+    svc = service or CoachService(DefaultStore(), get_llm)
     rate = limiter or RateLimiter.from_env()
     qr_path = qr_dir or QR_DIR
 
     def limit_model_calls(request: Request) -> None:
-        """會呼叫模型的端點才限流；來源 IP 看通道帶來的標頭，不能只看連線位址（通道讓所有連線都像來自本機）。"""
-        rate.check(request.headers, request.client.host if request.client else None)
-    app = FastAPI(title="管到飛", description="帶主管推理出最終有價值產品（VFP），再拆成副產品")
+        """會呼叫模型的端點才限流。來源 IP 的判斷見 ratelimit.client_ip：
+        雲端（production）只信代理附加在 X-Forwarded-For 尾端的值；本機／ngrok 沿用寬鬆判斷。"""
+        rate.check(request.headers, request.client.host if request.client else None, settings.trusted_proxy_hops())
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        settings.validate()  # 雲端缺必要環境變數就在啟動時報錯（本機不檢查）
+        yield
+
+    app = FastAPI(title="管到飛", description="帶主管推理出最終有價值產品（VFP），再拆成副產品", lifespan=lifespan)
 
     @app.middleware("http")
     async def _revalidate_web_files(request: Request, call_next):
-        """首頁與 .js／.css／.html 每次都要向伺服器重新驗證（有 ETag 時回 304）；圖片、字型維持一般快取。"""
-        response = await call_next(request)
+        """首頁與 .js／.css／.html 每次都要向伺服器重新驗證（有 ETag 時回 304）；圖片、字型維持一般快取。
+
+        也在這裡接住沒預料到的例外：只記例外類型與路徑，回友善中文，不外洩堆疊。
+        （不記例外訊息：資料庫錯誤的訊息會帶出整份 session 內容。）"""
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            log.error("未處理的例外 %s：%s %s", type(exc).__name__, request.method, request.url.path)
+            return JSONResponse(status_code=500, content={"detail": "系統發生錯誤，請稍後再試"})
         path = request.url.path
         if path == "/" or (path.startswith("/static/") and path.endswith(_REVALIDATE_SUFFIXES)):
             response.headers["Cache-Control"] = "no-cache"
@@ -148,6 +168,13 @@ def create_app(
     @app.exception_handler(SessionNotFound)
     async def _not_found(_: Request, exc: SessionNotFound):
         return JSONResponse(status_code=404, content={"detail": f"找不到 session：{exc}"})
+
+    @app.exception_handler(SQLAlchemyError)
+    async def _db_error(request: Request, exc: SQLAlchemyError):
+        log.error("資料庫錯誤 %s：%s %s", type(exc).__name__, request.method, request.url.path)
+        return JSONResponse(
+            status_code=503, content={"detail": "資料暫時無法存取，請稍後再試", "code": "db_unavailable"}
+        )
 
     @app.exception_handler(FlowError)
     async def _flow_error(_: Request, exc: FlowError):
@@ -166,6 +193,10 @@ def create_app(
 
     def reply(outcome) -> Reply:
         return Reply(**outcome.to_dict())
+
+    @app.get("/healthz", summary="存活檢查（給 Render 用；不呼叫模型、不連資料庫）", tags=["ops"])
+    def healthz():
+        return {"status": "ok"}
 
     @app.get("/industries", response_model=list[IndustryItem], summary="產業清單（來自規則檔 2.1）")
     def industries():

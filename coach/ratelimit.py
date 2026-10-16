@@ -21,18 +21,25 @@ class TooManyRequests(FlowError):
     status_code = 429
 
 
-def client_ip(headers: Mapping[str, str], peer: str | None) -> str:
-    """來源 IP：CF-Connecting-IP → X-Forwarded-For 的第一個值 → 連線位址。
+def client_ip(headers: Mapping[str, str], peer: str | None, trusted_hops: int | None = None) -> str:
+    """來源 IP。
 
+    trusted_hops=None（本機／ngrok）：CF-Connecting-IP → X-Forwarded-For 的第一個值 → 連線位址。
     ngrok 這類通道會讓所有連線看起來都來自本機，所以不能只看連線位址。
+
+    trusted_hops=N（雲端，N≥1）：前面有 N 層代理，每層都把「它看到的來源」附加到 X-Forwarded-For 尾端。
+    用戶端可以自己送假的 X-Forwarded-For（會排在最前面），所以只信右邊算起第 N 個，並且忽略 CF-Connecting-IP。
+    標頭層數不夠（有人繞過代理直連）就用連線位址。
     """
     lower = {k.lower(): v for k, v in headers.items()}
+    xff = [p.strip() for p in (lower.get("x-forwarded-for") or "").split(",") if p.strip()]
+    if trusted_hops:
+        return xff[-trusted_hops] if len(xff) >= trusted_hops else (peer or "unknown")
     cf = (lower.get("cf-connecting-ip") or "").strip()
     if cf:
         return cf
-    first = (lower.get("x-forwarded-for") or "").split(",")[0].strip()
-    if first:
-        return first
+    if xff:
+        return xff[0]
     return peer or "unknown"
 
 
@@ -91,6 +98,6 @@ class RateLimiter:
                     del self._ip[key]
             return True
 
-    def check(self, headers: Mapping[str, str], peer: str | None) -> None:
-        if not self.allow(client_ip(headers, peer)):
+    def check(self, headers: Mapping[str, str], peer: str | None, trusted_hops: int | None = None) -> None:
+        if not self.allow(client_ip(headers, peer, trusted_hops)):
             raise TooManyRequests(TOO_MANY_MESSAGE)

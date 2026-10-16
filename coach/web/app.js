@@ -66,7 +66,13 @@ async function request(method, path, body) {
   } catch {
     /* 沒有 JSON 內容 */
   }
+  const hasDetail = data && typeof data.detail === "string";
+  // 沒有 JSON 內容的 502／503／504 是 Render 的代理回的（服務正在啟動或忙碌），不是模型的問題
+  if ([502, 503, 504].includes(res.status) && !hasDetail) {
+    throw apiError("伺服器正在啟動或暫時忙碌，請等幾秒再試一次", res.status);
+  }
   if (res.status === 502) throw apiError("教練的回覆格式有誤，請再按一次送出", 502);
+  if (res.status === 503 && data.code === "db_unavailable") throw apiError(data.detail, 503);
   if (res.status === 503) throw apiError("目前無法連線到模型，請稍後再試", 503);
   if (res.status === 429) throw apiError("目前使用的人比較多，請稍後再試", 429);
   if (data && typeof data.detail === "string") {

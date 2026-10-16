@@ -1,8 +1,10 @@
-openai>=1.50
-python-dotenv>=1.0
-fastapi>=0.110
-uvicorn>=0.29
-pytest>=8.0
-httpx>=0.27  # FastAPI TestClient 需要
-openpyxl>=3.1  # 匯出 Excel
-qrcode>=7.4  # 公開網址的 QR code（SVG，不需要 Pillow）
+# 執行時需要的套件（Render 部署只裝這份）。升級版本請連同 requirements-dev.txt 一起測過再改。
+fastapi==0.143.0
+uvicorn==0.54.0
+openai==3.28.0
+python-dotenv==1.2.4
+openpyxl==3.1.5  # 匯出 Excel
+qrcode==8.2  # 公開網址的 QR code（SVG，不需要 Pillow）
+SQLAlchemy==2.1.4
+alembic==1.20.0
+psycopg[binary]==3.3.6  # Postgres 驅動（psycopg 3）

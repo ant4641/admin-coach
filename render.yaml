@@ -1,0 +1,35 @@
+# Render Blueprint。只列環境變數「名稱」；值一律到 Render 網站的 Environment 頁面手動填（sync: false）。
+services:
+  - type: web
+    name: guan-dao-fei
+    runtime: python
+    plan: free # 免費方案閒置 15 分鐘會休眠，休眠後第一個請求要等約 1 分鐘；正式使用請改 starter
+    region: singapore # 離台灣近；要和 Neon 專案同區域（Neon 的 AWS Asia Pacific 1 Singapore）
+    buildCommand: pip install -r requirements.txt
+    # coach.serve：檢查環境變數 → alembic upgrade head → uvicorn（0.0.0.0:$PORT）
+    startCommand: python -m coach.serve
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.5
+      - key: APP_ENV
+        value: production
+      - key: LLM_PROVIDER
+        value: azure
+      - key: TRUSTED_PROXY_HOPS
+        value: "1"
+      - key: DATABASE_URL # Neon 的 pooled 連線字串（主機名含 -pooler）
+        sync: false
+      - key: DATABASE_URL_DIRECT # Neon 的 direct 連線字串，只給 migration 用
+        sync: false
+      - key: AZURE_OPENAI_ENDPOINT
+        sync: false
+      - key: AZURE_OPENAI_API_KEY
+        sync: false
+      - key: AZURE_OPENAI_DEPLOYMENT
+        sync: false
+      - key: AZURE_OPENAI_API_VERSION
+        value: 2024-10-21
+      - key: LLM_TEMPERATURE # 留空＝不送；推理模型不支援此參數
+        sync: false

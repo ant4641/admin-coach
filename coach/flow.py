@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -23,8 +24,16 @@ from coach.rules import Rules, load_rules
 from coach.store import SessionStore
 
 
+log = logging.getLogger("coach.flow")
+
+# 對外（API／網頁）看到的訊息。技術細節放在例外的 debug 屬性，只給命令列開發工具看，不進 HTTP 回應與日誌
+MODEL_DOWN_MESSAGE = "目前無法連線到模型，請稍後再試"
+BAD_REPLY_MESSAGE = "模型回覆無法解析，請再送出一次"
+
+
 class FlowError(Exception):
     status_code = 400
+    debug: str = ""  # 開發用的技術細節（可能含模型原文），不可回給網頁使用者
 
 
 class InvalidInput(FlowError):
@@ -42,9 +51,17 @@ class WrongState(FlowError):
 class BadModelReply(FlowError):
     status_code = 502
 
+    def __init__(self, message: str = BAD_REPLY_MESSAGE, debug: str = "") -> None:
+        super().__init__(message)
+        self.debug = debug
+
 
 class LLMUnavailable(FlowError):
     status_code = 503
+
+    def __init__(self, message: str = MODEL_DOWN_MESSAGE, debug: str = "") -> None:
+        super().__init__(message)
+        self.debug = debug
 
 
 @dataclass
@@ -216,6 +233,7 @@ class CoachService:
                 "edited": None,
             }
         self._save(s)
+        log.info("session=%s status=%s", s["id"], s["status"])
         out = self._outcome(s)
         out.rules = _rules_info(rules)
         out.llm_result = res
@@ -239,10 +257,16 @@ class CoachService:
         try:
             res = self._llm_factory().complete(messages)
         except Exception as e:  # 缺金鑰、網路、供應商錯誤都一樣處理
-            raise LLMUnavailable(f"{type(e).__name__}: {e}") from e
+            log.warning("模型呼叫失敗：%s", type(e).__name__)  # 只記類型：訊息可能含端點或請求內容
+            # 缺環境變數是我們自己丟的 RuntimeError（只有變數名稱），可以直接說；其他例外一律用通用訊息
+            message = str(e) if type(e) is RuntimeError else MODEL_DOWN_MESSAGE
+            raise LLMUnavailable(message, debug=f"{type(e).__name__}: {e}") from e
         reply = parse_reply(res.text)
         if reply.status == "unknown":
-            raise BadModelReply(f"模型回覆無法解析（{reply.parse_error}）：{res.text[:300]}")
+            log.warning("模型回覆無法解析：%s", reply.parse_error)
+            raise BadModelReply(
+                f"模型回覆無法解析（{reply.parse_error}），請再送出一次", debug=f"{reply.parse_error}：{res.text[:300]}"
+            )
         return reply, res
 
     def _save(self, s: dict) -> None:

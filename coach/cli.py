@@ -28,7 +28,7 @@ from coach.inputs import build_inputs, parse_industries
 from coach.llm import LLMClient, get_llm
 from coach.prompt import build_messages
 from coach.rules import DEFAULT_RULES_PATH, Rules, load_rules
-from coach.store import JsonFileStore
+from coach.store import default_store
 
 ROOT = Path(__file__).resolve().parent.parent
 CASES_DIR = ROOT / "test_cases"
@@ -72,7 +72,7 @@ class CaseRun:
 
 
 def run_case(case: Case, rules: Rules, llm: LLMClient) -> CaseRun:
-    svc = CoachService(JsonFileStore(OUTPUTS_DIR / "sessions"), lambda: llm, lambda: rules)
+    svc = CoachService(default_store(), lambda: llm, lambda: rules)
     answers = case.answers()
     run = CaseRun(status="error", answers_total=len(answers))
 
@@ -96,7 +96,7 @@ def run_case(case: Case, rules: Rules, llm: LLMClient) -> CaseRun:
             run.answers_used += 1
             run.status = run.outcome.status
     except FlowError as e:
-        run.status, run.error = "error", f"{type(e).__name__}: {e}"
+        run.status, run.error = "error", f"{type(e).__name__}: {e.debug or e}"
     return run
 
 
@@ -124,7 +124,7 @@ def render_output(case: Case, rules: Rules, llm: LLMClient, run: CaseRun, genera
     header = "\n".join(f"{k}: {json.dumps(v, ensure_ascii=False)}" for k, v in meta.items())
     parts = [f"---\n{header}\n---", f"# {case.meta.get('title', case.name)}", "## 輸入", case.body]
     if run.session_id:
-        s = JsonFileStore(OUTPUTS_DIR / "sessions").load(run.session_id)
+        s = default_store().load(run.session_id)
         lines = []
         for ex in s["exchanges"]:
             lines.append(f"教練：{ex['coach']['question']}")

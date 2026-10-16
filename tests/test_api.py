@@ -197,7 +197,7 @@ def test_docs_page_and_endpoints_listed(make):
     client, _ = make()
     assert client.get("/docs").status_code == 200
     paths = client.get("/openapi.json").json()["paths"]
-    assert set(paths) == {"/industries", "/sessions", "/sessions/{session_id}/answer", "/sessions/{session_id}/byproducts", "/sessions/{session_id}/staff", "/sessions/{session_id}", "/sessions/{session_id}/export.xlsx"}
+    assert set(paths) == {"/industries", "/sessions", "/sessions/{session_id}/answer", "/sessions/{session_id}/byproducts", "/sessions/{session_id}/staff", "/sessions/{session_id}", "/sessions/{session_id}/export.xlsx", "/healthz"}
 
 
 # ---- 網頁 -----------------------------------------------------------------
